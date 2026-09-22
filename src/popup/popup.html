@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>遗产地图插件 — 配置</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>遗产地图插件</h1>
+    <p class="subtitle">配置地图 API Key 以启用开放信息查询</p>
+
+    <div class="row">
+      <label for="enabled">
+        <input type="checkbox" id="enabled" checked>
+        <span>启用插件</span>
+      </label>
+    </div>
+
+    <div class="section">
+      <h2>高德地图 API Key <span class="provider-tag amap">默认</span></h2>
+      <input type="password" id="amapKey" placeholder="例：a7b1d3f8c2e5..." autocomplete="off">
+      <p class="hint">
+        在 <a href="https://lbs.amap.com/dev/key/app" target="_blank" rel="noopener">高德开放平台</a>
+        申请 Web 服务 API Key。需"成为开发者"后申请个人 Key，每日有免费配额。
+      </p>
+    </div>
+
+    <div class="section">
+      <h2>百度地图 API Key <span class="provider-tag baidu">备份</span></h2>
+      <input type="password" id="baiduAk" placeholder="例：kFnBMuGoqPG..." autocomplete="off">
+      <p class="hint">
+        在 <a href="https://lbsyun.baidu.com/apiconsole/key" target="_blank" rel="noopener">百度地图开放平台</a>
+        申请<strong>服务端</strong> API Key。需通过开发者认证。
+      </p>
+    </div>
+
+    <div class="section">
+      <h2>首选数据源</h2>
+      <select id="defaultProvider">
+        <option value="amap">高德地图（默认）</option>
+        <option value="baidu">百度地图</option>
+      </select>
+      <p class="hint">当首选数据源未命中时，插件会自动切换到备份数据源。</p>
+    </div>
+
+    <div class="section">
+      <h2>搜索模式</h2>
+      <select id="strategyMode">
+        <option value="combine">组合（推荐）</option>
+        <option value="name">仅用文保名称</option>
+        <option value="address">仅用地址</option>
+        <option value="geo">仅用坐标</option>
+      </select>
+      <p class="hint">默认同时用名称、地址、坐标三路检索并交叉印证，准确率最高。单用模式仅用于排查某一路是否异常。</p>
+    </div>
+    <div class="actions">
+      <button id="save">保存</button>
+    </div>
+    <div class="actions">
+      <button id="testKey" class="secondary">测试 Key</button>
+      <button id="clearCache" class="secondary">清除缓存</button>
+    </div>
+
+    <div id="dirtyHint" class="dirty-hint" style="display:none">
+      ⚠ 有未保存的修改 —— 点「保存」后才会生效（「测试 Key」会自动先保存）
+    </div>
+    <div id="cacheInfo" class="cache-info"></div>
+    <div id="status" class="status"></div>
+    <div id="testResult" class="test-result"></div>
+  </div>
+
+  <!-- 直接复用注入脚本里的 API 封装：测试用的就是真实请求路径与报错提示 -->
+  <script src="../content/apis/amap.js"></script>
+  <script src="../content/apis/baidu.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

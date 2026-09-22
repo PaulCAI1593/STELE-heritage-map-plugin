@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "遗产地图插件 — Heritage Map Plugin",
+  "version": "0.3.0",
+  "description": "在中国遗产地图 (stele.geogv.org) 的文保点位详情页，叠加高德/百度地图的开放时间、票价与地址。文物组请点进子项目查看。",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "*://stele.geogv.org/*",
+    "https://restapi.amap.com/*",
+    "https://api.map.baidu.com/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "遗产地图插件 — 配置 Key"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://stele.geogv.org/zhcn/*"],
+      "js": [
+        "content/decoder.js",
+        "content/naming.js",
+        "content/geo.js",
+        "content/cache.js",
+        "content/http.js",
+        "content/apis/amap.js",
+        "content/apis/baidu.js",
+        "content/matcher.js",
+        "content/card.js",
+        "content/content.js"
+      ],
+      "css": ["content/content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": []
+}

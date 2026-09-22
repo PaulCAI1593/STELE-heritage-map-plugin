@@ -1,0 +1,86 @@
+/* content/content.css
+ * 「开放信息」卡片样式。
+ *
+ * 设计原则：**尽量不加自定义样式**，直接复用站点自身的类，跟着站点走就不会走样：
+ *   .poi-section-hr               分隔线（站点各 section 之间都用它）
+ *   .poi-section-content-padding  左右各 1rem 内边距
+ *   .poi-section-title            蓝色小标题（#6699ff）
+ *   .table-no-border              表格无边框（tr/td border:none !important）
+ *   .attribute-table              正文色 #333
+ * 以上均定义于站点 /main.css。下面只补站点没有的几处：提示文字、页脚、
+ * 跳转链接行、表格表头、子项目注释。
+ */
+
+/* 提示文字（查询中 / 未匹配 / 匹配方式说明）——沿用站点灰色小字的观感 */
+#hmp-opening-card .hmp-note {
+  font-size: 12px;
+  color: #888;
+  line-height: 1.6;
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+}
+
+/* 页脚：数据来源 + 免责说明 */
+#hmp-opening-card .hmp-foot {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 4px;
+}
+
+/* 跳转链接行（未匹配时的兜底入口） */
+#hmp-opening-card .hmp-links {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+#hmp-opening-card .hmp-links a {
+  color: #6699ff;              /* 与站点 .poi-section-title 同色 */
+  margin-right: 14px;
+}
+
+#hmp-opening-card .hmp-links a:hover {
+  text-decoration: underline !important;
+}
+
+/* 文物组表格的表头 */
+#hmp-opening-card .hmp-th {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  padding: 4px 0;
+  text-align: left;
+}
+
+/* 子项目「实际匹配到的地图名」注释 */
+#hmp-opening-card .hmp-sub {
+  font-size: 11px;
+  color: #999;
+  line-height: 1.35;
+}
+
+/* 卡片内链接与站点其它链接保持一致的观感 */
+#hmp-opening-card td a {
+  color: #6699ff;
+}
+
+/* 「可能不开放」提醒：琥珀色提示条，克制但足够醒目 */
+#hmp-opening-card .hmp-alert {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8a5a00;
+  background: #fff8e6;
+  border-left: 3px solid #e0a800;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+
+#hmp-opening-card .hmp-sub-warn {
+  color: #b07a00;
+}
+
+/* 文物组表格里「用户刚点开的那个子项目」——点开子项时表格仍显示整组，标出当前行 */
+#hmp-opening-card tr.hmp-focus > td {
+  background: #f0f6ff;
+  font-weight: 600;
+}

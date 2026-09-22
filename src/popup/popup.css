@@ -1,0 +1,161 @@
+/* popup/popup.css */
+:root {
+  --primary: #EC7063;
+  --primary-dark: #C0392B;
+  --text: #222;
+  --text-muted: #777;
+  --border: #e0e0e0;
+  --bg: #fafafa;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 360px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.container {
+  padding: 16px;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 4px;
+  color: var(--primary-dark);
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+}
+
+.row { margin-bottom: 12px; }
+.row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+.section { margin-bottom: 14px; }
+.section h2 {
+  font-size: 13px;
+  margin: 0 0 6px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.provider-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-weight: normal;
+}
+.provider-tag.amap { background: #e7f3ff; color: #1976d2; }
+.provider-tag.baidu { background: #fff3e0; color: #e65100; }
+
+input[type="password"],
+select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  background: white;
+}
+input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+
+.hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.hint a { color: #1976d2; text-decoration: none; }
+.hint a:hover { text-decoration: underline; }
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+button {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: 4px;
+  background: var(--primary);
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+button:hover { background: var(--primary-dark); }
+button.secondary {
+  background: white;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+button.secondary:hover { background: #f0f0f0; }
+
+.status {
+  margin-top: 12px;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  display: none;
+}
+.status.success {
+  display: block;
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #c8e6c9;
+}
+.status.error {
+  display: block;
+  background: #ffebee;
+  color: #c62828;
+  border: 1px solid #ffcdd2;
+}
+/* 测试 Key 结果 */
+.test-result:not(:empty) {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.tr-row {
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 3px 0;
+  word-break: break-all;
+}
+.tr-row.tr-ok { color: #2e7d32; }
+.tr-row.tr-fail { color: #c62828; }
+
+.cache-info {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+}
+
+/* 有未保存修改时的提示条：这是"填了 Key 却没生效"的常见原因 */
+.dirty-hint {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a6d00;
+  background: #fff8e1;
+  border: 1px solid #ffe08a;
+  border-radius: 4px;
+}

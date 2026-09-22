@@ -1,0 +1,42 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# 临时/中间产物
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+
+# 打包产物（请用 GitHub Releases 分发，不要提交进仓库）
+release/
+.backup/
+
+# 本地研究缓存
+research/cache/
+research/*.bin
+research/*.tmp
+
+# ⚠️ STELE 站点自身的版权文件，绝对不能提交
+# （仅用于本地分析，来源：http://stele.geogv.org/zhcn/）
+research/app.js
+research/app.min.js*
+research/zhcn.js
+research/enus.js
+research/main.css
+research/main.zhcn.css
+research/main.enus.css
+
+# STELE API 响应样本（本地调试用，不必进仓库）
+research/feature_*.json
+research/feature_*.plain.txt
+research/cases/
