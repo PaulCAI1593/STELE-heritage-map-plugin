@@ -211,9 +211,15 @@
 
     // 「暂停开放 / 已关闭 / 维修中」等状态提醒 —— 放在最前面，避免白跑一趟
     const hint = closureHint(info);
+    const probe = state.closureProbe;
     if (hint) {
       children.push(el('div', { className: 'hmp-alert' },
         '⚠ 地图信息显示该点位可能不开放（含「' + hint + '」），建议先电话确认再前往。'));
+    } else if (probe) {
+      // 状态来自"另一家"：如实写明是哪一家标的，不笼统说"地图信息显示"。
+      children.push(el('div', { className: 'hmp-alert' },
+        '⚠ ' + label(probe.provider) + '标记该点位可能不开放（含「' + probe.hint +
+        '」），建议先电话确认再前往。'));
     }
 
     // 匹配方式提示：让用户能核对自己看到的是哪个地图 POI。
@@ -565,7 +571,7 @@
   // ⚠️ 不能写裸词「政府」：高德把「上海三山会馆管理委」这类社会团体也归在
   //    「政府机构;社会团体」下，写裸词会把该被压下去的管理委抬上来。
   //    只认真正的机关子类。
-  const HERITAGE_TYPE_RE = /(博物馆|展览馆|纪念馆|风景名胜|公园|寺庙|文物|古迹|遗址|宗教|美术馆|故居|陵园|文管所|游客中心|文化|古建|塔|宫|寺|观|教堂|学校|大学|学院|区政府|市政府|省政府|县政府|人民政府|乡镇级政府|其他政府机构|党委|区委|机关|事业单位|管理局|委员会|办事处|街道办)/;
+  const HERITAGE_TYPE_RE = /(博物馆|展览馆|纪念馆|风景名胜|公园|寺庙|文物|古迹|遗址|宗教|美术馆|故居|陵园|文管所|游客中心|文化|古建|塔|宫|寺|观|教堂|影剧院|音乐厅|剧场|剧院|学校|大学|学院|区政府|市政府|省政府|县政府|人民政府|乡镇级政府|其他政府机构|党委|区委|机关|事业单位|管理局|委员会|办事处|街道办)/;
   // 设施类：公交站/地铁站/停车场/打卡点… 都不是"可参观的点位"
   const FACILITY_TYPE_RE = /(公交|地铁|轨道交通|轻轨|车站|停车场|停车楼|加油|充电站|公共厕所|卫生间|出入口|收费站|服务区|通道|天桥|轮渡|码头|打卡|拍照|摄影|门址)/;
   // ⚠️ 这里**刻意不再按"商业类型"排除任何东西**。
@@ -589,6 +595,14 @@
   const FACILITY_NAME_RE = /(公交站|公交车站|地铁站|轨道交通站|停车场|停车楼|打卡|拍照点|摄影点|取景地|公共厕所|集散中心|换乘中心)/;
   // 文保点位周围的无关商户（类型字段在百度侧常缺失，只能看名字）
   const COMMERCIAL_NAME_RE = /(按摩|推拿|足疗|足浴|汗蒸|养生馆|美甲|美睫|理发店|美容院|宠物|网咖|棋牌室|便利店|超市|药房)/;
+  // 纯门牌号型的 POI：名字就是「路名 + 门牌号」，本身不是一处能去的地方。
+  // 实测（真实接口）：地址检索会稳定返回这类条目 ——
+  //   商船会馆   → 百度返回「会馆街38号」
+  //   上海音乐厅  → 百度返回「延安东路523号」
+  // 它们没有开放时间，地址还常是「黄浦区」这种残缺值，
+  // 采纳了等于给用户一张空卡片，比"未匹配"更糟（看起来像查到了）。
+  const ADDRESS_ONLY_NAME_RE = /^[\u4e00-\u9fa5]{2,10}(?:路|街|道|大街|大道|弄|巷|村|镇)\d{1,5}(?:号|弄|支弄)?$/;
+
   // 大门/出入口：如「马勒别墅(东门)」。只在**括号内**或**结尾**出现才算，
   // 避免误伤「天安门」「东门老街」这类真实地名。
   const GATE_NAME_RE = /(?:[（(](?:东门|南门|西门|北门|正门|大门|后门|侧门|小门|入口|出口|门口)[）)]|(?:东门|南门|西门|北门|正门|大门|后门|侧门|入口|出口)$)/;
@@ -686,6 +700,8 @@
     if (FACILITY_NAME_RE.test(name)) return 0;
     if (COMMERCIAL_NAME_RE.test(name)) return 0;
     if (GATE_NAME_RE.test(name)) return 0;
+    // 纯门牌号（「延安东路523号」「会馆街38号」）——地址条目，不是点位
+    if (ADDRESS_ONLY_NAME_RE.test(name)) return 0;
 
     if (type) {
       // 只按设施类排除；商业/服务类型一律保留（见上面注释）
@@ -710,9 +726,27 @@
    */
   function closureHint(info) {
     if (!info) return null;
-    const hay = [info.name, info.status].filter(Boolean).join(' ');
+    // 两家把"可能不开放"的信号放在不同位置，都要看：
+    //   · 名称本身    —— 「董家渡天主堂（暂停开放）」
+    //   · status      —— 百度顶层 status
+    //   · tag         —— 百度的 detail_info.tag / 高德的 business.tag
+    //   · 开放时间本身 —— 高德 business.opentime_today / _week、
+    //                    百度 detail_info.shop_hours
+    // 最后这一类最容易被漏掉，偏偏又是最常见的：暂停营业的点位，
+    // 两家的"营业时间"字段里写的直接就是「暂停开放」「暂停营业」。
+    // 只扫前三个字段时，卡片会把这个串当开放时间显示出来，却不给任何提醒。
+    const hay = [info.name, info.status, info.tag,
+      info.opentimeToday, info.opentimeWeek].filter(Boolean).join(' ');
     const m = hay.match(CLOSED_RE);
-    return m ? m[0] : null;
+    if (m) return m[0];
+    // 很短的 description 常是状态说明（"暂停营业"）；
+    // 长段落是介绍文字，里面出现"修缮/拆除"多半是历史叙述，不能当关闭信号。
+    const desc = String(info.description || '');
+    if (desc && desc.length <= 30) {
+      const md = desc.match(CLOSED_RE);
+      if (md) return md[0];
+    }
+    return null;
   }
 
   /**
@@ -740,6 +774,8 @@
       : { ...poi, lon: null, lat: null };
 
     const seen = new Set();
+    // 子项反查出来的"父 POI" uid 集合（百度专用，见下方 resolveParents）
+    const parentIds = new Set();
     let best = null;
     // 统计请求失败：如果**每个**变体都失败（例如跨域被拦），
     // 不能静默返回 null —— 那会被上层记成"未搜到候选"，
@@ -759,6 +795,9 @@
       const fresh = [];
       const dropped = [];
       for (const c of candidates) {
+        // ⚠ 必须在设施类过滤**之前**收集 parent_id：
+        // 百度把"本体"藏在子项后面（门 / 停车场），而子项本身会被当设施丢掉。
+        if (c.parentId) parentIds.add(c.parentId);
         const k = c.id || c.uid || c.name;
         if (!k || seen.has(k)) continue;
         seen.add(k);
@@ -776,14 +815,67 @@
 
       // 传入类型偏好：同名候选中优先可参观的（博物馆/景点），
       // 例如「上海三山会馆」（博物馆）胜过「上海三山会馆管理委」（办事机构）
+      const cand = [];
       const matched = window.HMP.matcher.pick(target, fresh, {
         rank: heritageRank,
         // 结构惩罚 + 住宅"借用文保名"的惩罚
         penalty: (c) => structuralPenalty(c) * borrowedNamePenalty(poi.name, c) *
           houseNoPenalty(poi, c),
+        dump: cand,
       });
+      // 选中的是「本体-子单元」时，把候选次序抄一份出来：
+      // 这能直接回答"本体到底在不在候选里、排第几、为什么输"。
+      if (matched && matched.isSub) {
+        console.log('[HMP]', provider, '候选次序（sim/score/是否子单元/距离）：' +
+          cand.slice(0, 6).map(x => x.name + '(' + x.sim.toFixed(2) + '/' +
+            x.score.toFixed(2) + (x.isSub ? '/子' : '') +
+            (x.dist == null ? '' : '/' + x.dist + 'm') + ')').join('  '));
+      }
       if (matched && (!best || matched.sim > best.sim)) best = matched;
       if (best && best.sim >= EARLY_ACCEPT_SIM) break;
+    }
+
+    // ── 子项反查父 POI（百度）──
+    // 实测：搜「上海音乐厅」，百度只返回
+    // 「凯迪拉克·上海音乐厅-正门 / -东门 / -地下停车场」——它们全被当设施丢掉，
+    // 于是名称路径一无所获，最后落到坐标兜底，误配到 451 m 外的另一个馆。
+    // 而这些子项带 parent_id，反查 place/v2/detail 就能拿到本体
+    // 「凯迪拉克·上海音乐厅」（tag=休闲娱乐;剧院，shop_hours=09:00-20:00）。
+    if ((!best || best.isSub) && parentIds.size &&
+        typeof api.detail === 'function' && provider === 'baidu') {
+      for (const uid of parentIds) {
+        let parent = null;
+        try {
+          parent = await api.detail({ ak: cfg.baiduAk, uid });
+        } catch (e) {
+          console.warn('[HMP]', provider, '父 POI 反查失败(' + uid + ')：' + e.message);
+          continue;
+        }
+        if (!parent) continue;
+        if (heritageRank(parent) === 0) {
+          console.log('[HMP]', provider, '父 POI「' + parent.name + '」属设施类，不采用');
+          continue;
+        }
+        const m = window.HMP.matcher.pick(target, [parent], {
+          rank: heritageRank,
+          penalty: (c) => structuralPenalty(c) * borrowedNamePenalty(poi.name, c) *
+            houseNoPenalty(poi, c),
+        });
+        if (!m) {
+          console.log('[HMP]', provider, '父 POI「' + parent.name +
+            '」与本点位名称不符（sim ' + window.HMP.matcher.nameScore(poi.name, parent.name).toFixed(2) + '）');
+          continue;
+        }
+        console.log('[HMP]', provider, '✅ 由子项的 parent_id 反查到本体「' +
+          parent.name + '」（sim ' + m.sim.toFixed(2) + '）');
+        // ⚠ 不能写成 m.sim > best.sim：子单元的相似度**同样是 1.00**。
+        //   nameScore 会把候选名按连接号拆成变体——"商船会馆-音乐剧《耋戏生》"
+        //   拆出"商船会馆"，与目标逐字相同 → sim 1.00。
+        //   于是"严格大于"永远换不掉它，反查白做（实测踩过：
+        //   商船会馆 仍被子单元/坐标兜底顶掉）。
+        //   反查出来的**本体**优先于任何"本体-子单元"形态。
+        if (!best || best.isSub || m.sim > best.sim) best = m;
+      }
     }
 
     if (!best) {
@@ -1080,10 +1172,16 @@
       // 三种手段的弱点是互补的：名称怕改名、地址怕旧门牌、坐标怕隔壁商户。
       // 只跑一路时，"仅被坐标支持"的隔壁商户就会胜出（实测踩过按摩店/打卡点）。
       const mode = cfg.strategyMode || 'combine';
-      const useName = (mode === 'combine' || mode === 'name');
-      const useAddr = (mode === 'combine' || mode === 'address');
+      // 「状态探针」：只跑名称检索这一路。
+      // 目的不是取开放时间/票价，而是看另一家的**状态字段**（tag / shop_hours）。
+      // 首选那家已有开放时间时，supplementFields 不会再问另一家，
+      // 于是"暂停开放"若恰好在另一家身上就永远拿不到（实测：董家渡天主堂）。
+      // 这里只花 1 次请求，而不是三路各一次。
+      const probeOnly = pass === 'status-probe';
+      const useName = probeOnly || (mode === 'combine' || mode === 'name');
+      const useAddr = !probeOnly && (mode === 'combine' || mode === 'address');
       // 文物组子项目不做坐标兜底：否则每栋楼都会套上外圈大学/景区的信息
-      const useGeo = (mode === 'combine' || mode === 'geo') && !poi.noGeoFallback;
+      const useGeo = !probeOnly && (mode === 'combine' || mode === 'geo') && !poi.noGeoFallback;
 
       let byName = null, byAddr = null, byGeo = null;
       // 记录这一家失败/无果的**具体**原因，供卡片上说明"为什么回退"。
@@ -1126,8 +1224,19 @@
       // 于是相似度 1.0 的借用名会直接命中规则②，轮不到后面
       // "地址+坐标双重印证"的正确结果（实测：兆丰花园遗址 应为中山公园）。
       const nameBorrowed = !!(byName && borrowedNamePenalty(poi.name, byName.matched.poi) < 1);
+      // 命中「本体-子单元」形态？（如「商船会馆-音乐剧《耋戏生》」）
+      // 与借用名同型的问题：subUnitPenalty 只参与**排序**，不影响"强命中"**判定**，
+      // 于是包含关系带来的 sim≈1.0 会直接命中规则②，轮不到坐标准确的"本体"。
+      const nameSubUnit = !!(byName && window.HMP.matcher.subUnitPenalty &&
+        window.HMP.matcher.subUnitPenalty(
+          (Array.isArray(poi.nameVariants) && poi.nameVariants.length) ? poi.nameVariants : [poi.name],
+          byName.matched.poi.name, poi.name) < 1);
+      if (nameSubUnit) {
+        console.log('[HMP]', provider, '名称命中「' + byName.matched.poi.name +
+          '」属「本体-子单元」形态 → 不作强命中，交给其它证据');
+      }
       const strongName = byName && byName.matched.sim >= NAME_STRONG_SIM &&
-        !nameTooFar && !nameBorrowed;
+        !nameTooFar && !nameBorrowed && !nameSubUnit;
       if (nameBorrowed) {
         console.log('[HMP]', provider, '名称强命中「' + byName.matched.poi.name +
           '」但属借用文保名的住宅类 → 不作强命中，交给地址/坐标印证');
@@ -1175,11 +1284,25 @@
         return { ok: true, ...hit, verifiedBy: level };
       };
 
+      // 印证成立时采纳哪一路的**名义**？
+      // 名称一路若命中「本体-子单元」（"商船会馆-音乐剧《耋戏生》"），
+      // 子单元的名字不是这个点位本身的名字，采纳它等于把用户带到隔壁去；
+      // 既然地址/坐标那一路印证了同一处地方，就用那一路的名义（通常正是本体）。
+      const nameSide = () => {
+        if (!nameSubUnit) return byName;
+        const alt = byAddr || byGeo;
+        if (alt) {
+          console.log('[HMP]', provider, '印证成立，但名称一路是子单元 → 改用「' +
+            alt.matched.poi.name + '」的名义');
+        }
+        return alt || byName;
+      };
+
       // ① 三重印证 —— 最强，不需要任何附加条件
-      if (nA && nG) return adopt(byName, '三重印证（名称+地址+坐标）');
+      if (nA && nG) return adopt(nameSide(), '三重印证（名称+地址+坐标）');
       // ② 两两印证（含名称的优先：名称能精确到具体 POI）
-      if (nA) return adopt(byName, '两路印证（名称+地址）');
-      if (nG) return adopt(byName, '两路印证（名称+坐标）');
+      if (nA) return adopt(nameSide(), '两路印证（名称+地址）');
+      if (nG) return adopt(nameSide(), '两路印证（名称+坐标）');
       if (aG) return adopt(byAddr, '两路印证（地址+坐标）');
 
       // ③ 以下都是"只有一路有结果"。仍然采用（有结果总比空着强），
@@ -1191,23 +1314,43 @@
       // 但若命中的是"借用文保名"的住宅/小区，这条就不成立：
       // 「兆丰花园遗址」其实在中山公园内（长宁路780号就是中山公园的地址），
       // 而 780 号上还有个同名住宅小区「兆丰花园」。
-      if (byAddr && !addrBorrowed) return adopt(byAddr, '仅地址（未经名称/坐标印证）');
+      const addrStrong = !!(byAddr && !addrBorrowed && byAddr.matched.sim >= NAME_STRONG_SIM);
+      if (addrStrong) return adopt(byAddr, '仅地址（未经名称/坐标印证）');
       if (addrBorrowed) {
         console.log('[HMP]', provider, '地址命中「' + byAddr.matched.poi.name +
           '」是借用文保名的住宅类 → 让位给坐标路径');
       }
       // 坐标命中 —— 只有类型确实像文物/景点才采用。
       // 否则就是"只被坐标支持的隔壁商户"，可信度最低，宁可不匹配。
+      //
+      // ⚠ 这一步要排在"名字对不上的地址命中"之前。地址检索是在一段**地址串**上
+      //   找 POI，同一地址上有消防队、居委会、商铺……名字可以毫不相干，
+      //   但坐标就在原地。实测：上海马桥遗址 → 地址命中相似度 0.182 的
+      //   「闵行区马桥镇专职消防队」(1090 m)，而坐标路径就在 218 m 外
+      //   找到了正确的「马桥古文化遗址公园」。
       if (geoIsHeritage) return adopt(byGeo, '仅坐标（类型像文物景点，未经名称/地址印证）');
       if (byGeo) {
         console.log('[HMP]', provider, '坐标命中但类型不像文物景点，不采用：' +
           byGeo.matched.poi.name);
       }
+      // 名称命中即使不够"强"，只要**类型确实像文物/景点**，也比"名字毫不相干的
+      // 地址命中"可信 —— 后者只是"同一个地址上的另一个单位"。
+      // 实测：崧泽遗址 → 名称命中「崧泽古文化遗址」(sim 0.57，类型=风景名胜)
+      // 被"仅地址"的「崧泽村村委会」(sim 0.33) 顶掉，用户看到的是村委会。
+      // 仍排除远处同名、借用文保名的住宅、以及"本体-子单元"形态。
+      if (byName && !nameTooFar && !nameBorrowed && !nameSubUnit &&
+          heritageRank(byName.matched.poi) === 2) {
+        return adopt(byName, '仅名称（sim ' + byName.matched.sim.toFixed(2) +
+          '，类型像文物景点，未经地址/坐标印证）');
+      }
+      if (byAddr && !addrBorrowed) return adopt(byAddr, '仅地址（未经名称/坐标印证）');
       // 坐标没有更好的，退回地址命中（有结果总比空着强）
       if (addrBorrowed) return adopt(byAddr, '仅地址（命中为借名住宅，可信度最低）');
       // 弱名称兜底（同样不能用远方的同名地点、也不能用借名的住宅）
       if (byName && !nameTooFar && !nameBorrowed) {
-        return adopt(byName, '仅名称（弱命中，未经印证）');
+        return adopt(byName, nameSubUnit
+          ? '仅名称（命中为「本体-子单元」，可信度最低）'
+          : '仅名称（弱命中，未经印证）');
       }
     }
     return null;
@@ -1315,6 +1458,12 @@
         '」，判定与当前结果不是同一处 → 不补充' +
         '（名称相似度 ' + sim + '，两家相距 ' + dist + '，距文保本体 ' + toPoi + '）');
       // 说明见上：日志里带上了相似度与两个距离，足以定位，不必再往卡片上堆文案。
+      //
+      // ⚠ 这里必须真的返回。此前只有这句日志、没有 return，
+      //   于是"判定不是同一处"之后照样把另一家的开放时间贴了上来 ——
+      //   日志说谎，且与该函数的设计前提（只有同一处才能互相贴字段）相反。
+      //   这条分支极难触发（能过 passes 的候选彼此多半也像），所以一直没暴露。
+      return result;
     }
 
     const merged = Object.assign({}, info);
@@ -1363,7 +1512,53 @@
       return { ok: false };
     }
 
-    return await supplementFields(cfg, poi, result, diag, pick.order);
+    const filled = await supplementFields(cfg, poi, result, diag, pick.order);
+    return await probeClosure(cfg, poi, filled, diag, pick.order);
+  }
+
+  /**
+   * 「关闭状态」探针 —— 问另一家：这个地方关了吗？
+   *
+   * 起因（实测）：上海董家渡天主堂。首选那家给了正常营业时间
+   * 「08:00-11:00,13:00-17:00」，卡片上一切正常；但另一家地图上
+   * 明确标着「暂停开放」。supplementFields 只在**缺开放时间**时才去问另一家，
+   * 所以这个状态永远拿不到。
+   *
+   * 只补一次**名称检索**（1 次请求，不是三路各一次），拿到就挂到结果上，
+   * 卡片照实说明是哪一家标的 —— 不冒充成"两家都说"。
+   */
+  async function probeClosure(cfg, poi, result, diag, order) {
+    if (!result || !result.ok) return result;
+    if (closureHint(result.info)) return result;   // 首选那家自己就给了，不必再问
+    if (order.length < 2) return result;           // 只配了一家，没得问
+    const other = order.find(x => x !== result.provider);
+    if (!other) return result;
+
+    let alt = null;
+    try {
+      alt = await runProvider(cfg, poi, other, diag, order, 'status-probe');
+    } catch (e) {
+      console.log('[HMP]', other, '状态探针失败：' + e.message);
+      return result;
+    }
+    if (!alt || !alt.ok || !alt.info) {
+      console.log('[HMP]', other, '状态探针：无可判定的结果');
+      return result;
+    }
+    const hint = closureHint(alt.info);
+    if (!hint) {
+      console.log('[HMP]', other, '状态探针：未发现关闭类标记');
+      return result;
+    }
+    // 只有确认是同一处，才敢把"暂停开放"贴到这个点位头上；
+    // 否则就成了"另一家某个关着的点位"张冠李戴。
+    if (!samePlace(result, alt, poi)) {
+      console.log('[HMP]', other, '状态探针命中「' + (alt.info.name || '') +
+        '」，但判定与当前结果不是同一处 → 不采用其状态');
+      return result;
+    }
+    console.log('[HMP] ⚠ ' + other + ' 标记该点位可能不开放（含「' + hint + '」）');
+    return Object.assign({}, result, { closureProbe: { provider: other, hint } });
   }
 
   /**
@@ -1445,7 +1640,8 @@
         fallbackNote,
         verifiedBy: result.verifiedBy || null,
         supplementedBy: result.supplementedBy || null,
-        supplementedFields: result.supplementedFields || null
+        supplementedFields: result.supplementedFields || null,
+        closureProbe: result.closureProbe || null
       };
       // 缓存键用**实际作答的那家**，而不是"首选那家"。
       // 否则百度临时失败、高德兜底的结果会被写进 baidu 键——
@@ -1488,6 +1684,7 @@
         verifiedBy: cacheData.verifiedBy || null,
         supplementedBy: cacheData.supplementedBy || null,
         supplementedFields: cacheData.supplementedFields || null,
+        closureProbe: cacheData.closureProbe || null,
         siteName: poi.name,
         amapSearchUrl, baiduSearchUrl,
         featureType: poi.featureType
@@ -1786,11 +1983,13 @@
     inspect,
     // 以下暴露用于调试与测试
     queryOnePoi,
+    probeClosure,
     searchByName,
     searchByAddress,
     searchNearby,
     heritageRank,
     plausiblePrice,
+    closureHint,
     pickProviders,
     borrowedNamePenalty,
     houseNoPenalty,

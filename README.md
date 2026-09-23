@@ -68,7 +68,7 @@ STELE 是一个由个人长期维护、**完全免费且无广告**的中国不�
 
 ### 方式一：下载打包好的扩展（推荐）
 
-1. 到 [Releases](https://github.com/PaulCAI61/STELE-heritage-map-plugin/releases) 下载最新的 `STELE-heritage-map-plugin-vX.Y.Z.zip`
+1. 到 [Releases](https://github.com/PaulCAI1593/STELE-heritage-map-plugin/releases) 下载最新的 `STELE-heritage-map-plugin-vX.Y.Z.zip`
 2. 解压到一个**不会被删除的固定目录**（Chrome 会一直从这里加载）
 3. 打开 `chrome://extensions/`，右上角开启「开发者模式」
 4. 点「加载已解压的扩展程序」，选中解压出来的目录
@@ -77,7 +77,7 @@ STELE 是一个由个人长期维护、**完全免费且无广告**的中国不�
 ### 方式二：从源码加载
 
 ```bash
-git clone https://github.com/PaulCAI61/STELE-heritage-map-plugin.git
+git clone https://github.com/PaulCAI1593/STELE-heritage-map-plugin.git
 ```
 
 然后在 `chrome://extensions/` → 「加载已解压的扩展程序」→ 选择仓库里的 **`src/`** 目录（扩展本体在 `src/`，无需构建）。
@@ -100,7 +100,7 @@ git clone https://github.com/PaulCAI61/STELE-heritage-map-plugin.git
 
 ## 🛠️ 开发
 
-无需安装任何依赖，纯 Node 即可跑全部测试（**492 项检查**）：
+无需安装任何依赖，纯 Node 即可跑全部测试（**558 项检查**）：
 
 ```bash
 npm test                 # 全部
@@ -120,7 +120,7 @@ npm run build            # 重新生成图标 + 打包到 release/
 | `src/` | **扩展本体**，直接加载这个目录 |
 | `src/content/` | 内容脚本：解码、名称处理、坐标、缓存、匹配、卡片渲染 |
 | `src/popup/` | 工具栏弹窗（填 Key、测试连通性、清缓存） |
-| `tests/` | 492 项回归测试，`tests/fixtures/` 是 22 个真实文保的 feature 响应样本（含 16 个类型样本与 5 个改名案例） |
+| `tests/` | 558 项回归测试，`tests/fixtures/` 是 22 个真实文保的 feature 响应样本（含 16 个类型样本与 5 个改名案例） |
 | `tools/` | 图标生成、打包脚本 |
 | `docs/` | 实机测试说明 |
 | `DESIGN.md` | **方案设计书**：坐标校正推导、三路匹配决策顺序、各类错配的成因与对策 |
@@ -183,4 +183,4 @@ Issue / PR 都欢迎。提交匹配错误时，**带上卡片上的「匹配到�
 
 ## 📄 许可证
 
-[MIT](LICENSE) © 2026 PaulCAI61
+[MIT](LICENSE) © 2026 PaulCAI1593

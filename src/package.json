@@ -1,6 +1,6 @@
 {
   "name": "heritage-map-plugin",
-  "version": "0.3.0",
+  "version": "0.3.10",
   "description": "在中国遗产地图 (stele.geogv.org) 的文保点位详情页，叠加高德/百度地图的开放时间、票价与地址",
   "private": true,
   "scripts": {
@@ -19,8 +19,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/PaulCAI61/STELE-heritage-map-plugin.git"
+    "url": "https://github.com/PaulCAI1593/STELE-heritage-map-plugin.git"
   },
-  "homepage": "https://github.com/PaulCAI61/STELE-heritage-map-plugin#readme",
-  "author": "PaulCAI61"
+  "homepage": "https://github.com/PaulCAI1593/STELE-heritage-map-plugin#readme",
+  "author": "PaulCAI1593"
 }

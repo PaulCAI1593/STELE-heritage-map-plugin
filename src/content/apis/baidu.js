@@ -46,6 +46,9 @@
 
   let shapeLogged = false;
 
+  // 看起来像"营业状态"的标签：这类值不能当 POI 类型用
+  const STATUS_LIKE_RE = /暂停|停业|歇业|关闭|闭馆|闭园|停办|维修|整修|装修|施工|改造|修缮|拆除/;
+
   /** 宽容取数：百度不同接口/版本可能给 number，也可能给 string */
   function toNum(v) {
     if (typeof v === 'number') return Number.isFinite(v) ? v : null;
@@ -73,6 +76,49 @@
   // 坐标解析失败时只提醒一次：这类问题会静默让坐标路径全废
   let coordWarned = false;
 
+  // 状态字段诊断：百度把"暂停营业/装修中"这类信号放在哪个字段，
+  // 不同接口与 POI 并不一致。这里把所有**值**看起来像状态的字段打出来，
+  // 一次就能确认该取哪个（只打第一条命中的，避免刷屏）。
+  let statusFieldLogged = false;
+  const STATUS_WORD_RE = /暂停|停业|歇业|关闭|闭馆|闭园|停办|维修|整修|装修|施工|改造|修缮|拆除/;
+  function logStatusFields(detail, p) {
+    if (statusFieldLogged) return;
+    const hits = [];
+    for (const src of [detail, p]) {
+      if (!src) continue;
+      for (const k of Object.keys(src)) {
+        const v = src[k];
+        if (v == null || typeof v === 'object') continue;
+        const sv = String(v);
+        if (STATUS_WORD_RE.test(sv)) hits.push(k + '=' + sv.slice(0, 40));
+      }
+    }
+    if (hits.length) {
+      statusFieldLogged = true;
+      console.log('[HMP] 百度状态类字段：' + hits.join(' | '));
+    }
+  }
+
+  // 百度的 type 字段可能是"检索范围"而非品类，这些值一律跳过
+  const TYPE_SCOPE_RE = /^(scope|life|poi|nearby|all|street|business)$/i;
+
+  /**
+   * 从百度 POI 里取出**品类**（供 heritageRank 判断能不能去）。
+   * 顺序即优先级：fields 越靠前越具体。
+   */
+  function bagType(detail, sources) {
+    const cands = [detail.classified_poi_tag, detail.tag, detail.label, detail.type];
+    for (const src of (sources || [])) if (src) cands.push(src.tag);
+    for (const raw of cands) {
+      const v = String(raw == null ? '' : raw).trim();
+      if (!v) continue;
+      if (TYPE_SCOPE_RE.test(v)) continue;        // 检索范围，不是品类
+      if (STATUS_LIKE_RE.test(v)) continue;       // 状态标签（"暂停营业"）不是品类
+      return v;
+    }
+    return '';
+  }
+
   function mapPoi(p) {
     const detail = p.detail_info || {};
     const sources = [detail, p];
@@ -91,6 +137,8 @@
     //      · 名称路径里 dist 变 Infinity → passes() 只认 sim≥0.7 → 改名场景过不了
     //    两者叠加就是"三路均未搜到候选"。高德侧用的是 parseFloat，一直没事，
     //    所以这个不对称一直没有暴露。
+    logStatusFields(detail, p);
+
     let loc = readLocation(p.location);
     if (loc.lon == null && detail.location) loc = readLocation(detail.location);
     if (!coordWarned && loc.lon == null && (p.location || detail.location)) {
@@ -106,7 +154,20 @@
       province: p.province || '',
       city: p.city || '',
       area: p.area || '',
-      type: detail.type || detail.tag || '',
+      // ⚠ 百度的 detail_info.type 是**检索范围**（"scope" / "life"），不是品类！
+    //   真正的品类在 classified_poi_tag / tag / label 里。实测（真实接口）：
+    //     {type:"scope", tag:"旅游景点;教堂", classified_poi_tag:"旅游景点;教堂;天主教堂"}
+    //     {type:"life",  tag:"交通设施;充电站"}
+    //   此前直接用了 detail.type，于是百度侧**每个候选的类型都是 "scope"**，
+    //   所有按类型做的判断（设施类排除、可参观类型加分）在百度侧等于全部失效：
+    //   实测把「星星充电充电站(上海音乐厅充电站)」当成了上海音乐厅的匹配结果。
+    type: bagType(detail, sources),
+      // 状态标签单独保留：closureHint 靠它给出"可能不开放"的提醒
+      tag: detail.tag || p.tag || '',
+      description: detail.description || p.description || '',
+      // 子项指向的"父 POI"。百度**不会**在名称检索里返回本体，
+      // 只返回它的门/停车场等子项，子项上带着这个 uid（实测有效）。
+      parentId: detail.parent_id || p.parent_id || '',
       lon: loc.lon,
       lat: loc.lat,
       tel: pickFrom(sources, TEL_KEYS),
@@ -158,7 +219,9 @@
       const hint = BAIDU_HINTS[j.status];
       throw new Error(`百度 status=${j.status} ${j.message || ''}` + (hint ? ' —— ' + hint : ''));
     }
-    const list = j.results || [];
+    // 详情接口（place/v2/detail）返回的是**单数** result，搜索接口才是 results；
+    // 两者形状不同，这里一并接住。
+    const list = j.results || (j.result ? [j.result] : []);
     // 返回 0 条时把实际请求打出来（隐去 ak）：这类失败不报错，
     // 只能靠"发了什么、回来什么"来定位。
     if (!list.length) {
@@ -249,10 +312,36 @@
         status: poi.status || null,
         address: poi.address || null,
         type: poi.type || null,
+        // 同上：mapPoi 取到了 tag / description，extract 必须原样带出来，
+        // 否则状态标签在到达 closureHint 之前就被丢掉了。
+        tag: poi.tag || null,
+        description: poi.description || null,
+        parentId: poi.parentId || null,
         externalUrl: poi.uid
           ? `https://map.baidu.com/marker?uid=${encodeURIComponent(poi.uid)}&src=hmp`
           : null
       };
+    },
+
+    /**
+     * 地点详情检索：按 uid 取单个 POI（place/v2/detail）。
+     *
+     * 存在的唯一理由：百度**不在名称检索里返回"本体"**。
+     * 实测：搜「上海音乐厅」拿到的全是它的子项
+     * （凯迪拉克·上海音乐厅-正门 / -东门 / -地下停车场），本体本身不出现，
+     * 而那些子项带 `parent_id`。用 parent_id 走这个接口就能拿到本体：
+     *   name=凯迪拉克·上海音乐厅  tag=休闲娱乐;剧院  shop_hours=09:00-20:00
+     *
+     * 详情接口还会多给一些搜索接口没有的字段：
+     * brand / price / telephone / service_rating / environment_rating / town。
+     */
+    async detail({ ak, uid }) {
+      if (!ak || !uid) return null;
+      const params = new URLSearchParams({ ak, uid, output: 'json', scope: '2' });
+      // callBaidu 已经把结果映射好了（单数 result 也接得住，见那边的注释）
+      const list = await callBaidu(
+        `https://api.map.baidu.com/place/v2/detail?${params.toString()}`);
+      return (list && list[0]) || null;
     },
 
     /**

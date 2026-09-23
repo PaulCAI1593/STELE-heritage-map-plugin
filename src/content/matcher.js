@@ -100,6 +100,17 @@
   const FACILITY_SUFFIX = /^(?:博物馆|博物院|纪念馆|展览馆|陈列馆|游客中心|服务中心|售票处|管理处|研究院|研究所|停车场|商店|餐厅|广场|入口|出口|大门|遗址公园)/;
   const FACILITY_PENALTY = 0.85; // 衍生点降权
   const CONTAIN_BONUS = 0.06;    // 候选是目标的"简短常用名"时加权
+  const CONTAIN_IN_CAND = 0.9;   // 候选名把目标名整段包住时的相似度下限（见 pairScore）
+  // 目标名落在候选的**括号里**时的降权：括号里写的是"位置"，不是"身份"。
+  //   無名咖啡馆(钟和公寓店)  —— 在钟和公寓，但不是钟和公寓
+  //   万达广场(上海马桥店)
+  const PAREN_BRANCH_PENALTY = 0.6;
+  // 最长公共子序列分量的上限：两段词对上了，足以让候选**进候选集**，
+  // 但不足以单独构成"名称强命中"（NAME_STRONG_SIM = 0.85）。
+  // 没有这个上限，拿截断变体去算会把不相干的候选抬到 1.0：
+  //   良渚遗址-莫角山遗址 拆出变体「良渚遗址」，
+  //   而「良渚古城遗址公园」按 4/4 = 1.0 与精确同名打平，随后靠距离定胜负。
+  const LCS_CAP = 0.8;
 
   // 候选名 = 目标名 + 连接号 + 后缀，形如
   //   "上海国际饭店-会议中心"、"上海孙中山故居纪念馆-草坪与建筑"
@@ -208,6 +219,76 @@
     return normed === o || normed === t;
   }
 
+  /**
+   * 最长公共**子序列**长度（可跳过字，不要求连续）。
+   *
+   * 为什么是子序列而不是子串：文保名与地图 POI 名常常"共用两段词、中间隔几个字"。
+   *   「上海马桥遗址」vs「马桥古文化遗址公园」
+   *   → 按顺序共用「马桥」+「遗址」= 4 个字（中间隔着"古文化"）。
+   * 用"最长公共**子串**"只有「马桥」= 2，仍然偏低；
+   * 而 levenshtein 把长度差重罚，只给 1 - 7/9 = 0.222 —— 明显不对。
+   *
+   * 注意：这里**不再把"遗址/公园"这类词从名字里删掉**。
+   * 早先的做法是 normalizeName 去掉噪声后缀，但"遗址"恰恰是这类点位的
+   * 核心词之一，删掉反而丢了信息。
+   */
+  function lcsLen(a, b) {
+    const x = String(a), y = String(b);
+    if (!x || !y) return 0;
+    const s1 = x.length <= y.length ? x : y;
+    const s2 = x.length <= y.length ? y : x;
+    let prev = new Array(s2.length + 1).fill(0);
+    for (let i = 1; i <= s1.length; i++) {
+      const cur = new Array(s2.length + 1).fill(0);
+      for (let j = 1; j <= s2.length; j++) {
+        cur[j] = s1[i - 1] === s2[j - 1]
+          ? prev[j - 1] + 1
+          : Math.max(prev[j], cur[j - 1]);
+      }
+      prev = cur;
+    }
+    return prev[s2.length];
+  }
+
+  /**
+   * 最长公共子序列分量 —— 补上 levenshtein 看不见的那一类相近。
+   * 文保名与 POI 名常常"共用几段词、中间隔着几个字"：
+   *   「上海马桥遗址」vs「马桥古文化遗址公园」→ 共用「马桥」+「遗址」(4)
+   *   levenshtein 只给 0.222（长度差被重罚），而这明显是相近的名字。
+   *
+   * ⚠ 必须用**完整原名**（不是变体）来算。pick 是逐个变体调 nameScore 的，
+   *   拿变体算会出错：`良渚遗址-莫角山遗址` 拆出的「良渚遗址」正好被
+   *   「良渚古城遗址公园」整段包住 → 满分 → 把精确同名挤掉。
+   *
+   * ⚠ 上限 LCS_CAP：这类"词对上了"足以让候选进候选集（passes 有
+   *   0.55 + 近距的放宽），但不足以单独构成"名称强命中"（NAME_STRONG_SIM = 0.85）。
+   *
+   * ⚠ 候选以全名**开头**时不加：那是"本体 + 后缀"
+   *   （大足石刻宝顶山景区、承德避暑山庄博物馆），归设施/子单元规则管。
+   *
+   * ⚠ 分母用全名长度：问的是"文保名有多少个字按顺序出现在候选名里"。
+   *   括号内容先剥掉 —— 那里写的是位置不是身份（無名咖啡馆(钟和公寓店)）。
+   */
+  function lcsComponent(full, cand) {
+    if (String(full).length < 3) return 0;
+    if (String(cand).startsWith(full)) return 0;
+    const bNoParen = String(cand).replace(/[（(][^）)]*[）)]/g, '');
+    const lcs = lcsLen(full, bNoParen);
+    if (lcs < 2) return 0;
+    return Math.min(lcs / String(full).length, LCS_CAP);
+  }
+
+  /** 目标名是否落在候选名的括号里（"位置"而非"身份"） */
+  function insideParensOf(a, b) {
+    if (String(a).length < 3) return false;
+    return new RegExp('[（(][^）)]*' + escapeRe(a) + '[^）)]*[）)]').test(String(b));
+  }
+
+  /** 正则转义（目标名里可能有 · 、括号等） */
+  function escapeRe(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\  function pairScore(a, b) {');
+  }
+
   function pairScore(a, b) {
     const aN = normalizeName(a);
     const bN = normalizeName(b);
@@ -223,15 +304,42 @@
     if (a !== b && a.includes(b)) {
       // 候选是目标的简短常用名（"承德避暑山庄" ⊃ "避暑山庄"）
       s = Math.min(1, s + CONTAIN_BONUS);
-    } else if (false) {
-      // （连接号子单元改由候选级别的 subUnitPenalty 统一处理，见下）
     } else if (fromNorm && b.length > a.length && b.startsWith(a) &&
                FACILITY_SUFFIX.test(b.slice(a.length))) {
       // 候选是目标的衍生设施（"承德避暑山庄" + "博物馆"）。
       // 仅在分数"靠规范化撑起来"时降权；若原始名本身就不错（如"故宫"→"故宫博物院"）
       // 说明该候选就是本体，不降权。
+      //
+      // ⚠ 这一支必须排在下面"候选包含目标名"之前：两者都命中时，
+      //   "本体 + 设施后缀"是要**降权**的，不能被包含加成抬成 1.0
+      //   （实测踩过：承德避暑山庄博物馆 从 0.85 被抬到 1.00，
+      //     于是压过了本该选中的"避暑山庄"）。
       s *= FACILITY_PENALTY;
+    } else if (a.length >= 3 && b.includes(a)) {
+      // 候选名把**目标名整段**包在里面（"凯迪拉克·上海音乐厅" ⊃ "上海音乐厅"）。
+      // 这是官方命名里最常见的一类：正式名前面挂了冠名/品牌。
+      //
+      // 不补这一档的话它只有 0.750 —— 实测（真实接口）上海音乐厅因此选错：
+      //   "凯迪拉克·上海音乐厅" 0.750  ← 本体，被压过
+      //   "上海音乐谷"          0.800  ← 3.5 km 外的另一处
+      // 至于「本体-子单元」那种包含（"商船会馆-音乐剧《耋戏生》"），
+      // 由候选级别的 subUnitPenalty 另行降权，并已被排除在"强命中"之外。
+      // ⚠ 但目标名出现在候选的**括号里**时不算：那是"位于此地的另一个实体"，
+      //   不是"本体前面挂冠名"。
+      //   实测踩过：上海马桥遗址 拆出变体"上海马桥"，
+      //   撞上「万达广场(上海马桥店)」→ 被抬到 0.90 成了"名称强命中"，
+      //   正确的「马桥古文化遗址公园」反而因为相似度不足 0.7 被拒。
+      const quoted = insideParensOf(a, b);
+      if (!quoted) s = Math.max(s, CONTAIN_IN_CAND);
     }
+
+    // ⚠ 括号里的内容只当"位置提示"，不是身份本身：
+    //   無名咖啡馆(钟和公寓店)  —— 在钟和公寓，但不是钟和公寓
+    //   万达广场(上海马桥店)    —— 在马桥，但不是马桥遗址
+    // 放在最后**独立生效**：无论前面走了哪条分支，这类候选都要再降一档。
+    // 之前只是"不吃包含加成"，还留着 0.68 的底子，仍可能挤掉正确候选。
+    // 反向不受影响：「凯迪拉克·上海音乐厅(南门)」的目标名在括号**外**。
+    if (insideParensOf(a, b)) s *= PAREN_BRANCH_PENALTY;
     return s;
   }
 
@@ -250,6 +358,7 @@
         if (best >= 1) return 1;
       }
     }
+
     return best;
   }
 
@@ -299,6 +408,7 @@
      * @param {object} target {name, nameVariants?, lon, lat}
      * @param {Array}  candidates
      * @param {object} [opts]
+     * @param {Array}  [opts.dump] 传入数组时，把打分后的候选（含 isSub/score）写进去，仅供排查。
      * @param {function} [opts.rank] 候选可参观性打分（2=像文物/景点，1=未知，0=明显无关）。
      *        用于同名候选之间的取舍，例如
      *        「上海三山会馆」（博物馆）应胜过「上海三山会馆管理委」（办事机构）。
@@ -309,6 +419,7 @@
       if (!targetName) return null;
       const rankFn = (opts && typeof opts.rank === 'function') ? opts.rank : null;
       const penFn = (opts && typeof opts.penalty === 'function') ? opts.penalty : null;
+      const dump = (opts && Array.isArray(opts.dump)) ? opts.dump : null;
 
       // 目标名变体：优先用调用方给出的完整列表
       // （含从 address/intro 挖出的「现用名」，如 真觉寺金刚宝座 → 北京石刻艺术博物馆）。
@@ -328,6 +439,9 @@
           if (s > sim) sim = s;
           if (sim >= 1) break;
         }
+        // 最长公共子序列分量：用**完整原名**算（变体那一层算不出正确结论）
+        const lcsS = lcsComponent(targetName, cName);
+        if (lcsS > sim) sim = lcsS;
         const dist = (Number.isFinite(target.lon) && Number.isFinite(c.lon))
           ? haversine(target.lon, target.lat, c.lon, c.lat)
           : Infinity;
@@ -357,6 +471,17 @@
       scored.sort((a, b) =>
         (b.score - a.score) !== 0 ? (b.score - a.score) : (a.dist - b.dist)
       );
+
+      // 排查用：把候选按次序抄一份出来（纯数据，无引用），
+      // 用来回答"本体到底在不在候选里、是第几名、为什么输"。
+      if (dump) {
+        for (const sc of scored) {
+          dump.push({
+            name: sc.poi.name, sim: sc.sim, score: sc.score,
+            isSub: !!sc.isSub, dist: Number.isFinite(sc.dist) ? Math.round(sc.dist) : null,
+          });
+        }
+      }
 
       // 依次取第一个"可接受"的候选。
       // 注意可接受性仍用**原始名称相似度**判定，类型偏好只影响排序，不降低门槛。

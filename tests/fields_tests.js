@@ -239,6 +239,48 @@ async function baiduMap(poi) {
       /defaultProvider === 'baidu' \? 'baidu' : 'amap'/.test(pickSrc));
   }
 
+  // ============ 状态标签 → "可能不开放"提示 ============
+  console.log('\n=== 状态标签（暂停营业等）===');
+  {
+    // 百度把这类信号放在 detail_info.tag 里。此前 closureHint 只查 name 与 status，
+    // 于是百度的状态标签完全没有提示 —— 用户反馈的正是这一点。
+
+    const b1 = await (async () => {
+      baiduBody = { status: 0, results: [{
+        uid: 's1', name: '某纪念馆', address: '某路1号',
+        location: { lng: 121.47, lat: 31.23 },
+        detail_info: { type: '科教文化服务;博物馆', tag: '暂停营业' },
+      }] };
+      const r = await BAIDU.search({ ak: 'A', name: '某纪念馆', region: '上海市' });
+      return r[0];
+    })();
+    check('百度 tag 被单独取出', b1 && b1.tag === '暂停营业', b1 ? String(b1.tag) : 'null');
+    check('状态类 tag 不冒充类型',
+      b1 && b1.type === '科教文化服务;博物馆', b1 ? String(b1.type) : 'null');
+
+    // 品类 tag 仍可兜底为类型（百度不少 POI 只在 tag 里写品类）
+    const b2 = await (async () => {
+      baiduBody = { status: 0, results: [{
+        uid: 's2', name: '某博物馆', location: { lng: 121.47, lat: 31.23 },
+        detail_info: { tag: '博物馆' },
+      }] };
+      const r = await BAIDU.search({ ak: 'A', name: '某博物馆', region: '上海市' });
+      return r[0];
+    })();
+    check('品类 tag 仍可兜底为类型', b2 && b2.type === '博物馆', b2 ? String(b2.type) : 'null');
+
+    // 高德侧也要取到 tag
+    const a1 = await (async () => {
+      amapBody = { status: '1', pois: [{
+        id: 'a1', name: '某纪念馆', type: '科教文化服务;博物馆',
+        location: '121.47,31.23', business: { tag: '装修中' },
+      }] };
+      const r = await AMAP.search({ key: 'K', name: '某纪念馆', region: '上海市' });
+      return r[0];
+    })();
+    check('高德 tag 也被取出', a1 && a1.tag === '装修中', a1 ? String(a1.tag) : 'null');
+  }
+
   console.log('\n结果: 通过 ' + pass + ' / 失败 ' + fail);
   process.exit(fail === 0 ? 0 : 1);
 })();

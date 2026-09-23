@@ -525,7 +525,7 @@ heritage-map-plugin/
 │   ├── background/          MV3 service worker（缓存清理 + 跨域请求代理）
 │   ├── icons/               PNG 图标（16/32/48/128，由 tools/make-icons.js 生成）
 │   └── LICENSE
-├── tests/                   回归测试（npm test，共 492 项检查）
+├── tests/                   回归测试（npm test，共 558 项检查）
 │   ├── fixtures/            22 个真实点位的 feature 响应 + picks.json
 │   ├── run_tests.js         16 个文保单位匹配测试
 │   ├── baidu_parity_tests.js 百度侧全链路 + 跨数据源决策一致性矩阵

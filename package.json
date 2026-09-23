@@ -1,6 +1,6 @@
 {
   "name": "stele-heritage-map-plugin",
-  "version": "0.3.0",
+  "version": "0.3.10",
   "private": true,
   "description": "在 STELE 中国遗产地图的文保点位详情页，叠加高德/百度地图的开放时间、票价与地址（开发期工具与测试；扩展本体在 src/，无需构建）",
   "scripts": {
@@ -29,11 +29,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PaulCAI61/STELE-heritage-map-plugin.git"
+    "url": "https://github.com/PaulCAI1593/STELE-heritage-map-plugin.git"
   },
-  "homepage": "https://github.com/PaulCAI61/STELE-heritage-map-plugin#readme",
+  "homepage": "https://github.com/PaulCAI1593/STELE-heritage-map-plugin#readme",
   "bugs": {
-    "url": "https://github.com/PaulCAI61/STELE-heritage-map-plugin/issues"
+    "url": "https://github.com/PaulCAI1593/STELE-heritage-map-plugin/issues"
   },
   "keywords": [
     "chrome-extension",
@@ -44,5 +44,5 @@
     "cultural-relics",
     "geogv"
   ],
-  "author": "PaulCAI61"
+  "author": "PaulCAI1593"
 }

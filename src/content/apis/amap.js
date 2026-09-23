@@ -54,6 +54,12 @@
   // 只打印一次真实字段构成，便于排查"字段名猜错"
   let shapeLogged = false;
 
+  // 状态字段诊断（与百度侧对称）：把所有**值**看起来像状态的字段打出来，
+  // 确认"暂停开放 / 暂停营业"到底被哪家放在哪个字段里。
+  // 只打第一条命中的，避免刷屏。
+  let statusFieldLogged = false;
+  const STATUS_WORD_RE = /暂停|停业|歇业|关闭|闭馆|闭园|停办|维修|整修|装修|施工|改造|修缮|拆除/;
+
   /** 把高德原始 POI 映射成插件内部结构 */
   function mapPoi(p) {
     const loc = parseLocation(p.location);
@@ -73,6 +79,23 @@
         '}  biz_ext={' + xKeys.join(',') + '}');
     }
 
+    if (!statusFieldLogged) {
+      const hits = [];
+      for (const src of sources) {
+        if (!src) continue;
+        for (const k of Object.keys(src)) {
+          const v = src[k];
+          if (v == null || typeof v === 'object') continue;
+          const sv = String(v);
+          if (STATUS_WORD_RE.test(sv)) hits.push(k + '=' + sv.slice(0, 40));
+        }
+      }
+      if (hits.length) {
+        statusFieldLogged = true;
+        console.log('[HMP] 高德状态类字段：' + hits.join(' | '));
+      }
+    }
+
     return {
       id: p.id,
       name: p.name || '',
@@ -86,6 +109,9 @@
       lon: loc.lon,
       lat: loc.lat,
       tel: pickFrom(sources, TEL_KEYS),
+      // 高德的 business.tag：可能是品类，也可能是"暂停营业"这类状态。
+      // 单独保留给 closureHint 用（百度对应的是 detail_info.tag）。
+      tag: pickFrom(sources, ['tag']),
       opentimeToday: openToday,
       opentimeWeek: openWeek,
       rating: pickFrom(sources, RATING_KEYS),
@@ -181,6 +207,10 @@
         status: poi.opentimeToday ? 'open' : 'unknown',
         address: poi.address || null,
         type: poi.type || null,
+        // 状态标签必须带出来：mapPoi 取到了 tag，但 extract 是手写字面量，
+        // 之前漏了它 —— closureHint(info) 的 info.tag 因此永远是 undefined。
+        tag: poi.tag || null,
+        description: poi.description || null,
         externalUrl: poi.id
           ? `https://uri.amap.com/marker?position=${poi.lon},${poi.lat}&name=${encodeURIComponent(poi.name)}&src=hmp&coordinate=gaode`
           : null
