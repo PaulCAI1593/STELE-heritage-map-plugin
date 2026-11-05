@@ -13,10 +13,16 @@ const ROOT = path.resolve(__dirname, '..');
 const TOOL = path.join(ROOT, 'tools/backtest-matching.js');
 const CASES = path.join(ROOT, 'tests/fixtures/backtest/cases-L.json');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hmp-bt-'));
+// #14-S 语义更新：阶段 L 的「行为不变」现在用「同一份源码」验证（L 的日志改动自身中性）。
+// 「跨阶段（#14-L 基线 → #14-S 当前）」的行为差异另测，并如实要求 exit 1。
 const beforeDir = path.join(tmp, 'before');
 fs.mkdirSync(beforeDir);
-fs.writeFileSync(path.join(beforeDir, 'matcher.js'),
-  require('child_process').execFileSync('git', ['show', 'HEAD:src/content/matcher.js'], { cwd: ROOT, encoding: 'utf8' }));
+fs.copyFileSync(path.join(ROOT, 'src/content/matcher.js'), path.join(beforeDir, 'matcher.js'));
+fs.copyFileSync(path.join(ROOT, 'src/content/name-evidence.js'), path.join(beforeDir, 'name-evidence.js'));
+const beforeS = path.join(tmp, 'before-S');
+fs.mkdirSync(beforeS);
+fs.writeFileSync(path.join(beforeS, 'matcher.js'),
+  require('child_process').execFileSync('git', ['show', 'b09022a:src/content/matcher.js'], { cwd: ROOT, encoding: 'utf8' }));
 
 function run(args) {
   try {
@@ -56,6 +62,13 @@ check('cases[] 每条字段齐全', result.A.cases.concat(result.B.cases).every(
   ['id', 'steleName', 'actualPick', 'score', 'source', 'sim', 'simAdj', 'dist'].every(k => k in c)),
   JSON.stringify(Object.keys(result.A.cases[0] || {})));
 check('改动前后 top1 差异 = 0', result.top1Diff === 0, 'diff=' + result.top1Diff);
+// #14-S：与 #14-L 基线（b09022a）比，评分行为应确实改变，且脚本如实以 exit 1 报出差异。
+const crossDir = path.join(tmp, 'cross');
+const cross = run(base.concat(['--out', crossDir, '--cases', CASES, '--before-src', beforeS]));
+const crossResult = JSON.parse(fs.readFileSync(path.join(crossDir, 'result.json'), 'utf8'));
+check('跨阶段（b09022a → 当前）：差异如实报告（exit 1 ⇔ top1Diff>0）',
+  (cross.code === 1) === (crossResult.top1Diff > 0),
+  'exit=' + cross.code + ' diff=' + crossResult.top1Diff);
 check('params 如实记录（无隐藏默认）',
   result.params.kp === 0.04 && result.params.ks === 0.02 && result.params.strong === 0.85,
   JSON.stringify(result.params));

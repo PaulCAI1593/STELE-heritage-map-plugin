@@ -64,13 +64,26 @@ function parseArgs(argv) {
 function loadMatcher(dir) {
   const file = path.join(dir, 'matcher.js');
   if (!fs.existsSync(file)) throw new Error('找不到 matcher.js：' + file);
-  const code = fs.readFileSync(file, 'utf8');
   const sandbox = { window: { HMP: {} }, console: { log() {}, warn() {}, error() {} }, Math, Number, String, Array, Object, JSON };
   vm.createContext(sandbox);
-  vm.runInContext(code, sandbox, { filename: file });
+  // #14-S：核心证据模块必须先于 matcher 加载（与 content_scripts 顺序一致）。
+  const neFile = path.join(dir, 'name-evidence.js');
+  if (fs.existsSync(neFile)) {
+    vm.runInContext(fs.readFileSync(neFile, 'utf8'), sandbox, { filename: neFile });
+  }
+  vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
   const m = sandbox.window.HMP && sandbox.window.HMP.matcher;
   if (!m || typeof m.pick !== 'function') throw new Error('matcher.js 未导出 matcher.pick');
   return m;
+}
+
+// 与业务侧 NAME_MAX_DIST 对齐：名称命中超过 3 km 不采信（runProvider 的闸门）。
+const NAME_MAX_DIST = 3000;
+function distM(lon1, lat1, lon2, lat2) {
+  const R = 6371000, rad = d => d * Math.PI / 180;
+  const dLat = rad(lat2 - lat1), dLon = rad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
 function rankOf(c) {
@@ -87,7 +100,18 @@ function pickTop1(matcher, c, kp, ks) {
     lat: Number.isFinite(c.targetLat) ? c.targetLat : (c.candidates[0] ? c.candidates[0].lat : null),
   };
   const dump = [];
-  const m = matcher.pick(target, c.candidates || [], { rank: rankOf, dump });
+  // 与业务侧一致：设施/商业类（rank 0）在**进入打分前**就被丢弃
+  // （card.js 的三路检索都做这个过滤），回测复现同一前置条件。
+  const tLon = Number.isFinite(target.lon) ? target.lon : null;
+  const tLat = Number.isFinite(target.lat) ? target.lat : null;
+  const pool = (c.candidates || []).filter(x => {
+    if (rankOf(x) === 0) return false;
+    if (tLon != null && tLat != null && Number.isFinite(x.lon) && Number.isFinite(x.lat)) {
+      if (distM(tLon, tLat, x.lon, x.lat) > NAME_MAX_DIST) return false;
+    }
+    return true;
+  });
+  const m = matcher.pick(target, pool, { rank: rankOf, dump });
   if (!m) return { pick: null, dump };
   return {
     pick: {
@@ -95,7 +119,7 @@ function pickTop1(matcher, c, kp, ks) {
       score: Number.isFinite(m.score) ? Math.round(m.score * 1e6) / 1e6 : null,
       source: c.route || null,
       sim: Number.isFinite(m.sim) ? Math.round(m.sim * 1e6) / 1e6 : null,
-      simAdj: Number.isFinite(m.sim) ? Math.round(m.sim * 1e6) / 1e6 : null,
+      simAdj: Number.isFinite(m.simAdj) ? Math.round(m.simAdj * 1e6) / 1e6 : (Number.isFinite(m.sim) ? Math.round(m.sim * 1e6) / 1e6 : null),
       dist: Number.isFinite(m.dist) ? Math.round(m.dist) : null,
     },
     dump,
@@ -143,6 +167,10 @@ function commitOf(dir) {
 }
 
 function runOnce(opts, matcher) {
+  // #14-S：标定参数单出口注入（KP/KS/强证据线），不在 matcher 里写死。
+  if (matcher && typeof matcher.setCalibration === 'function') {
+    matcher.setCalibration({ KP: opts.kp, KS: opts.ks, NAME_STRONG_SIM: opts.strong });
+  }
   const data = readCases(opts.cases);
   const cases = { A: [], B: [], C: null, top1Diff: 0 };
   for (const c of data.A || []) {
@@ -241,7 +269,8 @@ function main() {
   const hard = [];
   if (!firstResult) hard.push('没有可执行案例');
   const top1Diff = firstResult ? firstResult.d.diff : 0;
-  if (top1Diff !== 0) hard.push('top1 差异 ' + top1Diff + ' 条（硬约束要求 0）');
+  // 阶段 L 的核心命题是「行为不变」；阶段 S 就是要改变 top1，不以此判失败。
+  if (opts.stage === 'L' && top1Diff !== 0) hard.push('top1 差异 ' + top1Diff + ' 条（硬约束要求 0）');
   // 阶段 L 的核心命题是「改动前后行为不变」，缺改前源码就无法证明；阶段 S 是扫参，不强求。
   if (opts.stage === 'L' && !opts.beforeSrc) hard.push('未提供 --before-src：无法证明「改动前后」（当前 before 与 after 是同一份源码）');
 
@@ -268,6 +297,67 @@ function main() {
         : '阶段 S：KP/KS 参与评分（由后续 commit 实现；当前 matcher 未变更时不生效）',
     },
   };
+  // ── #14-S：阶段 S 的验收计数与强证据线三档 ──
+  let strongSweep = null;
+  if (opts.stage === 'S') {
+    const beforeCounts = opts.beforeSrc
+      ? summarizeA(runOnce({ ...opts, kp: opts.kp, ks: opts.ks }, beforeMatcher).A) : null;
+    const aCounts = result.A.counts;
+    if (beforeCounts && aCounts.correct < beforeCounts.correct) {
+      hard.push('A 集正确数下降：' + beforeCounts.correct + ' → ' + aCounts.correct);
+    }
+    if (result.B.counts.institutionHit !== 0) hard.push('B 集机构命中 ' + result.B.counts.institutionHit + '（要求 0）');
+    if (result.B.counts.homonymFalsePick !== 0) hard.push('B 集远同名误选 ' + result.B.counts.homonymFalsePick + '（要求 0）');
+    const cPick = result.C && result.C.after ? result.C.after.actualPick : null;
+    if (cPick && /警务/.test(cPick)) hard.push('C 集仍选中警务机构：' + cPick);
+    strongSweep = [];
+    for (const st of [0.75, 0.80, 0.85]) {
+      const r = runOnce({ ...opts, kp: opts.kp, ks: opts.ks, strong: st }, afterMatcher);
+      strongSweep.push({ strong: st, A: summarizeA(r.A), B: computeRates(r.B), C: r.C ? r.C.after : null });
+    }
+    result.strongSweep = strongSweep;
+    result.beforeCounts = beforeCounts;
+    if (opts.sweep) {
+      // 连通块：A 正确数最大且 B 机构命中为 0 的格子里，4 邻接成块大小。
+      const key = (kp, ks) => kp.toFixed(2) + '/' + ks.toFixed(2);
+      const cells = new Map(sweepRows.map(r => [key(r.kp, r.ks), r]));
+      const maxCorrect = Math.max(...sweepRows.map(r => r.A.correct));
+      const okSet = new Set(sweepRows.filter(r => r.A.correct === maxCorrect && r.B.institutionHit === 0).map(r => key(r.kp, r.ks)));
+      const kps = [...new Set(sweepRows.map(r => r.kp))].sort((a, b) => a - b);
+      const kss = [...new Set(sweepRows.map(r => r.ks))].sort((a, b) => a - b);
+      const seen = new Set();
+      const blocks = [];
+      for (const k of okSet) {
+        if (seen.has(k)) continue;
+        const stack = [k]; seen.add(k);
+        const members = [];
+        while (stack.length) {
+          const cur = stack.pop(); members.push(cur);
+          const [ckp, cks] = cur.split('/').map(Number);
+          const nb = [
+            key(ckp, cks - 0.01), key(ckp, cks + 0.01),
+            key(ckp - 0.01, cks), key(ckp + 0.01, cks),
+          ];
+          for (const n of nb) {
+            if (okSet.has(n) && !seen.has(n)) { seen.add(n); stack.push(n); }
+          }
+        }
+        blocks.push({ size: members.length, members: members.sort() });
+      }
+      blocks.sort((a, b) => b.size - a.size);
+      const gridJson = {
+        stage: 'S', params: { kp: opts.kp, ks: opts.ks, strong: opts.strong },
+        criteria: 'A.correct 最大 且 B.institutionHit=0',
+        groups: sweepRows.length, maxCorrect,
+        blocks, largestBlock: blocks.length ? blocks[0].size : 0,
+        rows: sweepRows,
+        kpAxis: kps, ksAxis: kss,
+      };
+      fs.writeFileSync(path.join(outDir, 'grid.json'), JSON.stringify(gridJson, null, 2));
+      result.grid = { groups: sweepRows.length, maxCorrect, largestBlock: gridJson.largestBlock, blocks: blocks.slice(0, 5) };
+    }
+  }
+
   if (opts.sweep && sweepRows.length !== 35) hard.push('扫参组数 ' + sweepRows.length + ' ≠ 35');
 
   fs.writeFileSync(path.join(outDir, 'result.json'), JSON.stringify(result, null, 2));

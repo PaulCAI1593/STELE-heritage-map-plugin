@@ -7,6 +7,31 @@
   'use strict';
   window.HMP = window.HMP || {};
 
+  // ── #14-S：评分参数单出口 ──────────────────────────────────────────────
+  // 回测脚本通过 setCalibration() 注入；业务代码只读这里，不再各处写死。
+  // 初值先用 KP=0.04 / KS=0.02 / FLOOR_P=0.35 / FLOOR_S=0.6 / strong=0.85 跑通流程，
+  // 最终选点由数据独立扫参 + 总监批准后，单独一个 commit 改这里。
+  const CALIBRATION = {
+    KP: 0.04, KS: 0.02, FLOOR_P: 0.35, FLOOR_S: 0.6, NAME_STRONG_SIM: 0.85,
+  };
+  // 三路来源先验：名称最精确，地址次之，坐标最弱。
+  const SOURCE_PRIOR = { name: 1.0, address: 0.85, nearby: 0.75 };
+  // 机关类：即使可参观性 rank 被标成 2，也不吃 1.12 的类型加成（降为 rank 1）。
+  const INSTITUTION_RE = /(人民政府|政府|党委|机关|事业单位|管理局|管理委员会|管委会|管理委|管理处|委员会|办事处|街道办)$/;
+  // 办事机构类后缀（原在 pick 内部，提升为模块级供 scoreCandidate 使用）
+  const ADMIN_SUFFIX_RE = /(管理委员会|管委会|管理委|管理处|办事处|管理局|管理中心)$/;
+
+  /** 回测/测试注入标定参数；只改已知键，非法值忽略并返回当前值 */
+  function setCalibration(patch) {
+    if (patch && typeof patch === 'object') {
+      for (const k of Object.keys(CALIBRATION)) {
+        const v = patch[k];
+        if (typeof v === 'number' && Number.isFinite(v)) CALIBRATION[k] = v;
+      }
+    }
+    return Object.assign({}, CALIBRATION);
+  }
+
   // Levenshtein 距离（O(mn) 空间复杂度对短字符串够用）
   function levenshtein(a, b) {
     if (a === b) return 0;
@@ -392,7 +417,75 @@
     return false;
   }
 
+  /**
+   * #14-S 单候选评分（三路共用）。
+   * 公式：(simAdj×0.6 + distScore×0.4) × mult × subPen × pen × sourcePrior
+   *   simAdj = sim × max(FLOOR_P, 1-KP×prefixLen) × max(FLOOR_S, 1-KS×suffixLen)
+   *   mult 只在 simAdj ≥ NAME_STRONG_SIM 时生效（类型加成后置）
+   * 兼容：未加载 name-evidence 模块时退化为旧行为（simAdj=sim，不弃权），
+   *       以保证既有测试套件（不加载该模块）语义不变。
+   */
+  function scoreCandidate(targetName, tVars, c, opts) {
+    const o = opts || {};
+    const cName = (c.name || '').trim();
+    const source = o.source || 'name';
+    let sim = 0;
+    for (const t of tVars) {
+      const sc = nameScore(t, cName);
+      if (sc > sim) sim = sc;
+      if (sim >= 1) break;
+    }
+    const lcsS = lcsComponent(targetName, cName);
+    if (lcsS > sim) sim = lcsS;
+    const dist = (Number.isFinite(o.refLon) && Number.isFinite(c.lon))
+      ? haversine(o.refLon, o.refLat, c.lon, c.lat) : Infinity;
+    const distScore = !Number.isFinite(dist) ? 0.5
+      : dist < 30 ? 1
+      : Math.max(0, 1 - (dist - 30) / 1500);
+
+    // 核心证据 + 缺席惩罚（模块缺失时退化为旧行为）
+    const ne = window.HMP && window.HMP.nameEvidence;
+    let ev;
+    if (ne && typeof ne.coreEvidence === 'function') {
+      ev = ne.coreEvidence(targetName, cName);
+    } else {
+      ev = { core: null, prefixLen: 0, suffixLen: 0, coverRatio: 1, abstain: false, reason: 'no-module' };
+    }
+    let simAdj = sim, absence = 1;
+    if (!ev.abstain) {
+      const pFac = Math.max(CALIBRATION.FLOOR_P, 1 - CALIBRATION.KP * ev.prefixLen);
+      const sFac = Math.max(CALIBRATION.FLOOR_S, 1 - CALIBRATION.KS * ev.suffixLen);
+      absence = pFac * sFac;
+      simAdj = Math.max(0, Math.min(1, sim * absence));
+    }
+
+    let typeRank = 0, mult = 1;
+    if (o.rankFn) {
+      typeRank = o.rankFn(c) || 0;
+      if (INSTITUTION_RE.test(cName)) typeRank = 1;
+      if (simAdj >= CALIBRATION.NAME_STRONG_SIM) {
+        mult = typeRank === 2 ? 1.12 : (typeRank === 0 ? 0.7 : 1.0);
+      }
+    } else if (INSTITUTION_RE.test(cName)) {
+      typeRank = 1;
+    }
+    if (ADMIN_SUFFIX_RE.test(cName)) mult *= 0.85;
+
+    const subPen = subUnitPenalty(tVars, cName, targetName);
+    const custPen = o.penFn ? (o.penFn(c) || 1) : 1;
+    const prior = SOURCE_PRIOR[source] || 1;
+    const score = (simAdj * 0.6 + distScore * 0.4) * mult * subPen * custPen * prior;
+    return {
+      poi: c, sim, simAdj, dist, distScore, typeRank, mult, score,
+      isSub: subPen < 1, subPen, pen: custPen,
+      source, sourcePrior: prior, absence,
+      core: ev.core, prefixLen: ev.prefixLen, suffixLen: ev.suffixLen,
+      coverRatio: ev.coverRatio, abstain: !!ev.abstain,
+    };
+  }
+
   window.HMP.matcher = {
+    CALIBRATION, SOURCE_PRIOR, setCalibration, scoreCandidate,
     levenshteinSimilarity,
     nameScore,
     subUnitPenalty,
@@ -428,48 +521,13 @@
         ? target.nameVariants
         : variantsOf(targetName);
 
-      // 办事机构类后缀：名字里带这些的多半是"管理处/管委会"而非可参观的点位
-      const ADMIN_SUFFIX_RE = /(管理委员会|管委会|管理委|管理处|办事处|管理局|管理中心)$/;
-
-      const scored = candidates.map(c => {
-        const cName = (c.name || '').trim();
-        let sim = 0;
-        for (const t of tVars) {
-          const s = nameScore(t, cName);
-          if (s > sim) sim = s;
-          if (sim >= 1) break;
-        }
-        // 最长公共子序列分量：用**完整原名**算（变体那一层算不出正确结论）
-        const lcsS = lcsComponent(targetName, cName);
-        if (lcsS > sim) sim = lcsS;
-        const dist = (Number.isFinite(target.lon) && Number.isFinite(c.lon))
-          ? haversine(target.lon, target.lat, c.lon, c.lat)
-          : Infinity;
-        const distScore = !Number.isFinite(dist) ? 0.5
-          : dist < 30 ? 1
-          : Math.max(0, 1 - (dist - 30) / 1500);
-
-        // 类型偏好：可参观的（博物馆/景点/寺庙…）优先
-        let typeRank = 0, mult = 1;
-        if (rankFn) {
-          typeRank = rankFn(c) || 0;
-          mult = typeRank === 2 ? 1.12 : (typeRank === 0 ? 0.7 : 1.0);
-        }
-        // 办事机构名称轻微降权
-        if (ADMIN_SUFFIX_RE.test(cName)) mult *= 0.85;
-
-        // 子单元降权（候选名 = 目标名 + 连接号 + 后缀，或本体名 + 附属设施后缀）
-        // 传 targetName（原始全名）而不是只传变体：变体是 searchNames 拆出来的短桩，
-        // 拿短桩去比会把精确同名的候选误判成子单元（见 subUnitPenalty 注释）。
-        const subPen = subUnitPenalty(tVars, cName, targetName);
-        const custPen = penFn ? (penFn(c) || 1) : 1;
-        const score = (sim * 0.6 + distScore * 0.4) * mult * subPen * custPen;
-        return {
-          poi: c, sim, dist, typeRank, score, isSub: subPen < 1,
-          // #14-L：分项只供决策日志解释，不参与上面的 score
-          distScore, subPen, pen: custPen,
-        };
-      });
+      // #14-S：统一评分（单候选公式见 scoreCandidate）。名称路 source=name。
+      const ref = { refLon: target.lon, refLat: target.lat };
+      const scored = candidates.map(c => scoreCandidate(targetName, tVars, c, {
+        ...ref, source: (opts && opts.source) || 'name',
+        rankFn,
+        penFn,
+      }));
 
       // 先按综合分（含类型偏好）排；同分再看距离
       scored.sort((a, b) =>
@@ -481,14 +539,21 @@
       if (dump) {
         for (const sc of scored) {
           dump.push({
-            name: sc.poi.name, sim: sc.sim, score: sc.score,
+            name: sc.poi.name, sim: sc.sim, score: sc.score, poi: sc.poi,
             isSub: !!sc.isSub, dist: Number.isFinite(sc.dist) ? Math.round(sc.dist) : null,
             // #14-L：可解释性分项（只记录，不参与打分；simAdj 本阶段恒等 sim）
-            simAdj: sc.sim,
+            simAdj: sc.simAdj,
             distScore: sc.distScore,
             typeRank: sc.typeRank,
             subPen: sc.subPen,
             pen: sc.pen,
+            mult: sc.mult,
+            source: sc.source,
+            sourcePrior: sc.sourcePrior,
+            absence: sc.absence,
+            prefixLen: sc.prefixLen,
+            suffixLen: sc.suffixLen,
+            core: sc.core,
           });
         }
       }

@@ -211,8 +211,10 @@ function check(label, cond, detail) {
   };
   aroundPois = [];
   const r4 = await CARD.queryOnePoi({ amapKey: 'K', strategyMode: 'combine' }, poi);
-  check('标记为「两路印证（名称+地址）」',
-    r4.ok && /名称\+地址/.test(String(r4.verifiedBy)),
+  // #14-S 语义更新：决策标签统一为「三路统一评分（来源 …）」；名称+地址同时命中时
+  // 由统一分选出名称路（同一点位），不再输出「两路印证」字样。
+  check('名称+地址互证时采用名称路（#14-S 统一评分标签）',
+    r4.ok && /三路统一评分（来源 名称/.test(String(r4.verifiedBy)),
     r4.ok ? String(r4.verifiedBy) : '未匹配');
   check('结果仍是马勒别墅饭店', r4.ok && r4.info.name === '上海马勒别墅饭店');
 
@@ -840,7 +842,7 @@ function check(label, cond, detail) {
     rSC = await CARD.queryOnePoi(cfgSC, poiSC);
     check('精确同名的本体仍正常强命中',
       rSC.ok && rSC.info.name === '商船会馆' &&
-      /三重印证|两路印证/.test(rSC.verifiedBy || ''),
+      /三路统一评分（来源 名称/.test(rSC.verifiedBy || ''),
       rSC.ok ? rSC.info.name + ' / ' + rSC.verifiedBy : '未匹配');
   }
 

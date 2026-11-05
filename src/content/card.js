@@ -243,7 +243,7 @@
     const push = (label, o, strongable) => {
       if (!o || !Number.isFinite(o.candCount)) return;
       let one = label + ' ' + o.candCount + ' 候选（最高 ' + fmt(o.bestSim);
-      if (strongable && Number.isFinite(o.bestSim) && o.bestSim >= NAME_STRONG_SIM) {
+      if (strongable && Number.isFinite(o.bestSim) && o.bestSim >= strongSim()) {
         one += '，达强证据线 ' + NAME_STRONG_SIM;
       }
       parts.push(one + '）');
@@ -735,6 +735,10 @@
   const EARLY_ACCEPT_SIM = 0.95;
   // 名称相似度达到该值即认为"强名称证据"，优先于位置匹配
   const NAME_STRONG_SIM = 0.85;
+  // #14-S：强证据线改为从 matcher 的 CALIBRATION 单出口读取（回测可注入）。
+  const strongSim = () => (window.HMP && window.HMP.matcher && window.HMP.matcher.CALIBRATION &&
+    Number.isFinite(window.HMP.matcher.CALIBRATION.NAME_STRONG_SIM)
+    ? window.HMP.matcher.CALIBRATION.NAME_STRONG_SIM : NAME_STRONG_SIM);
   // 周边搜索半径（米）。校正后坐标误差约 150 m，1 km 足够留出余量。
   // 候选打分权重（类型 / 距离 / 名称）与"门牌一致"加成。
   // 抽成常量是为了能拿真实案例回归对比不同权重的准确率（见 tools/weight_sweep.js）。
@@ -1194,21 +1198,16 @@
       // 明显无关的商业 POI 直接丢弃
       if (rank === 0) continue;
 
-      const distScore = 1 - dist / NEARBY_RADIUS;      // 0..1
-      const typeScore = rank === 2 ? 1 : 0.35;
-      const nameSim = bestNameSim(c.name);
-
-      // 名称权重提到 0.35：改名场景下「现用名」也在 variants 里，
-      // 所以提高权重不会伤害改名匹配，却能显著压住无关的近距离 POI。
-      let score = typeScore * W_TYPE + distScore * W_DIST + nameSim * W_NAME;
-
-      // 候选级惩罚：高德 parent 标注 + 地址含楼层（统一口径，见 candidatePenalty）
+      // #14-S：三路统一评分（source=nearby 先验 0.75）；类型加成后置、
+      // 缺席惩罚等全部走 matcher.scoreCandidate 的单一实现。
       const pen = candidatePenalty(c, targetVariants, poi.name, poi);
-      score *= pen;
-
+      const r = window.HMP.matcher.scoreCandidate(poi.name, targetVariants, c, {
+        refLon: ref[0], refLat: ref[1], source: 'nearby',
+        rankFn: heritageRank, penFn: () => pen,
+      });
       scored.push({
-        poi: c, dist, rank, nameSim, isSub: pen < 1, score,
-        typeRank: rank, distScore, subPen: pen, pen,
+        ...r, poi: c, dist, rank, nameSim: r.sim, isSub: pen < 1,
+        typeRank: rank, distScore: r.distScore, subPen: pen, pen,
       });
     }
     if (!scored.length) {
@@ -1341,22 +1340,20 @@
       String(n || "").replace(/[（(][^）)]*[）)]s*$$/, ""));
 
     const scored = usable.map(c => {
-      const dist = (geo && ref && Number.isFinite(ref[0]) && Number.isFinite(c.lon))
-        ? geo.distance(ref[0], ref[1], c.lon, c.lat)
-        : Infinity;
       const rank = heritageRank(c);
-      const typeScore = rank === 2 ? 1 : 0.35;
-      const distScore = !Number.isFinite(dist) ? 0.4
-        : Math.max(0, 1 - dist / NEARBY_RADIUS);
-      const nameSim = bestNameSim(c.name);
       const noBonus = (wantNo && houseNoOf(c.address) === wantNo) ? HOUSE_NO_BONUS : 1;
       const containerBonus = (fromGroup && isContainer(c.name)) ? 1.15 : 1;
       const structural = candidatePenalty(c, targetVariants, poi.name);
       const pen = structural * noBonus * containerBonus;
-      const score = (typeScore * W_TYPE + distScore * W_DIST + nameSim * W_NAME) * pen;
+      // #14-S：三路统一评分（source=address 先验 0.85）；门牌/整体性加成作 penFn。
+      const refPt = (geo && ref && Number.isFinite(ref[0]))
+        ? { refLon: ref[0], refLat: ref[1] } : {};
+      const r = window.HMP.matcher.scoreCandidate(poi.name, targetVariants, c, {
+        ...refPt, source: 'address', rankFn: heritageRank, penFn: () => pen,
+      });
       return {
-        poi: c, dist, rank, nameSim, score,
-        typeRank: rank, distScore, subPen: structural, pen,
+        ...r, poi: c, rank, nameSim: r.sim, isSub: structural < 1,
+        typeRank: rank, subPen: structural, pen,
       };
     });
     scored.sort((a, b) => (b.score - a.score) || (a.dist - b.dist));
@@ -1483,7 +1480,7 @@
         console.log('[HMP]', provider, '名称命中「' + byName.matched.poi.name +
           '」属「本体-子单元」形态 → 不作强命中，交给其它证据');
       }
-      const strongName = byName && byName.matched.sim >= NAME_STRONG_SIM &&
+      const strongName = byName && byName.matched.sim >= strongSim() &&
         !nameTooFar && !nameBorrowed && !nameSubUnit;
       if (nameBorrowed) {
         console.log('[HMP]', provider, '名称强命中「' + byName.matched.poi.name +
@@ -1546,6 +1543,88 @@
         return alt || byName;
       };
 
+      // ── #14-S：三路候选统一评分（单一公式、无短路）──
+      // 取消「名称强命中即直接采纳」与「按路径顺序先取」：三路候选进同一池，
+      // 用同一公式重算后取最高：
+      //   [simAdj×0.6 + distScore×0.4] × mult × subPen × pen × sourcePrior
+      // 各步权重/来源/缺席惩罚写进 diag.merge 与 why[]（决策日志据此解释）。
+      // 原印证树（下方 ①–③）保留为「候选池为空」时的兜底，不再参与正常路径。
+      const unified = (() => {
+        const refG = provider === 'amap' ? poi.gcj : poi.bd09;
+        const refPt = (refG && Number.isFinite(refG[0]))
+          ? { refLon: refG[0], refLat: refG[1] } : {};
+        const tv = (Array.isArray(poi.nameVariants) && poi.nameVariants.length)
+          ? poi.nameVariants : [poi.name];
+        const pools = [
+          { src: 'name', list: (ev.name && ev.name.candidates) || [] },
+          { src: 'address', list: (ev.address && ev.address.candidates) || [] },
+          { src: 'nearby', list: (ev.nearby && ev.nearby.candidates) || [] },
+        ];
+        let best = null;
+        for (const p of pools) {
+          for (const cd of p.list) {
+            const cand = cd && cd.poi;
+            if (!cand) continue;
+            // 既有闸门不变（阈值不动）：远同名/借名/子单元、借名住宅、非文物类坐标。
+            if (p.src === 'name') {
+              if (!window.HMP.matcher.passes(cd.sim, cd.dist)) continue;
+              if (Number.isFinite(cd.dist) && cd.dist > distLimit) continue;
+              if (borrowedNamePenalty(poi.name, cand) < 1) continue;
+              if (window.HMP.matcher.subUnitPenalty &&
+                  window.HMP.matcher.subUnitPenalty(tv, cand.name, poi.name) < 1) continue;
+            } else if (p.src === 'address') {
+              if (borrowedNamePenalty(poi.name, cand) < 1) {
+                console.log('[HMP]', provider, '地址命中「' + cand.name +
+                  '」是借用文保名的住宅类 → 统一评分不采用');
+                continue;
+              }
+            } else if (p.src === 'nearby') {
+              if (heritageRank(cand) !== 2) continue;
+            }
+            const sc = window.HMP.matcher.scoreCandidate(poi.name, tv, cand, {
+              ...refPt, source: p.src, rankFn: heritageRank,
+              penFn: () => (Number.isFinite(cd.pen) ? cd.pen : 1),
+            });
+            if (!best || sc.score > best.sc.score) best = { src: p.src, sc };
+          }
+        }
+        return best;
+      })();
+
+      if (unified) {
+        const sc = unified.sc;
+        const srcLabel = { name: '名称', address: '地址', nearby: '坐标' }[unified.src];
+        const level = '三路统一评分（来源 ' + srcLabel + '，score ' +
+          sc.score.toFixed(3) + '，simAdj ' + sc.simAdj.toFixed(3) + '）';
+        why.push(level + '：sim ' + sc.sim.toFixed(2) + '×缺席 ' + sc.absence.toFixed(2) +
+          '（前缀-' + sc.prefixLen + '/后缀-' + sc.suffixLen + '字）×类型 ' +
+          sc.mult.toFixed(2) + '×子单元 ' + sc.subPen.toFixed(2) +
+          '×惩罚 ' + sc.pen.toFixed(2) + '×来源先验 ' + sc.sourcePrior.toFixed(2));
+        if (diag) {
+          diag.merge = diag.merge || {};
+          diag.merge[provider] = {
+            source: unified.src, score: sc.score, sim: sc.sim, simAdj: sc.simAdj,
+            absence: sc.absence, prefixLen: sc.prefixLen, suffixLen: sc.suffixLen,
+            sourcePrior: sc.sourcePrior, mult: sc.mult, subPen: sc.subPen, pen: sc.pen,
+            core: sc.core || null,
+          };
+          diag.decisionWhy = diag.decisionWhy || {};
+          diag.decisionWhy[provider] = why.slice();
+        }
+        const api = window.HMP.apis[provider];
+        const matchType = unified.src === 'address' ? 'address'
+          : (unified.src === 'nearby' ? 'location' : 'name');
+        return adopt({
+          matched: {
+            poi: sc.poi, sim: sc.sim, simAdj: sc.simAdj, dist: sc.dist,
+            distScore: sc.distScore, score: sc.score, source: unified.src,
+          },
+          info: api && typeof api.extract === 'function' ? api.extract(sc.poi) : undefined,
+          provider,
+          matchType,
+        }, level);
+      }
+
       // ① 三重印证 —— 最强，不需要任何附加条件
       if (nA && nG) return adopt(nameSide(), '三重印证（名称+地址+坐标）');
       // ② 两两印证（含名称的优先：名称能精确到具体 POI）
@@ -1555,14 +1634,13 @@
 
       // ③ 以下都是"只有一路有结果"。仍然采用（有结果总比空着强），
       //    但标注清楚未经印证，让用户自己判断。
-      if (strongName) {
-        return adopt(byName, '仅名称（sim ' + byName.matched.sim.toFixed(2) + '，未经地址/坐标印证）');
-      }
+      // #14-S：原「名称强命中即短路」分支已删除——强名称也要和地址/坐标候选比统一分。
+
       // 地址命中 —— 门牌号不随改名变化，可靠性高于纯坐标。
       // 但若命中的是"借用文保名"的住宅/小区，这条就不成立：
       // 「兆丰花园遗址」其实在中山公园内（长宁路780号就是中山公园的地址），
       // 而 780 号上还有个同名住宅小区「兆丰花园」。
-      const addrStrong = !!(byAddr && !addrBorrowed && byAddr.matched.sim >= NAME_STRONG_SIM);
+      const addrStrong = !!(byAddr && !addrBorrowed && byAddr.matched.sim >= strongSim());
       if (addrStrong) return adopt(byAddr, '仅地址（未经名称/坐标印证）');
       if (addrBorrowed) {
         console.log('[HMP]', provider, '地址命中「' + byAddr.matched.poi.name +
@@ -1938,6 +2016,12 @@
     const note = diag && diag.providerNotes && diag.providerNotes[provider];
     if (note) why.push(note);
     if (diag && diag.fallbackFrom) why.push('已从' + diag.fallbackFrom + '回退到' + provider);
+    // #14-S：统一评分的各步权重/来源写进 why[]，供决策日志解释。
+    if (diag && diag.decisionWhy && Array.isArray(diag.decisionWhy[provider])) {
+      for (const line of diag.decisionWhy[provider]) {
+        if (why.indexOf(line) < 0) why.push(line);
+      }
+    }
     const refDist = m && Number.isFinite(m.dist) ? m.dist : null;
     const distScore = !Number.isFinite(refDist) ? null
       : (refDist < 30 ? 1 : Math.max(0, 1 - (refDist - 30) / 1500));
@@ -1959,12 +2043,11 @@
       final: m ? {
         pickedName: finalPoi,
         sim: Number.isFinite(m.sim) ? m.sim : null,
-        // commit L：惩罚尚未引入，simAdj 暂等值 sim
-        simAdj: Number.isFinite(m.sim) ? m.sim : null,
+        simAdj: Number.isFinite(m.simAdj) ? m.simAdj : (Number.isFinite(m.sim) ? m.sim : null),
         dist: refDist == null ? null : Math.round(refDist),
         distScore,
         score: Number.isFinite(m.score) ? m.score : null,
-        source: result.matchType || 'name',
+        source: m.source || result.matchType || 'name',
         why,
       } : null,
       // 兼容字段：旧版阅读习惯/旧测试断言仍能看到时间、点位、家、选用路
