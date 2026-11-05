@@ -58,8 +58,9 @@ check('非商户：玄妙观 → 南阳市玄妙观', M.isMerchant('玄妙观', 
 check('机关：玄妙观 → 玄妙观村委会', M.isInstitution('玄妙观', '玄妙观村委会') === true);
 check('机关：玄妙观 → 玄妙观小学', M.isInstitution('玄妙观', '玄妙观小学') === true);
 check('机关：玄妙观 → 玄妙观社区医院', M.exclusionKindOf('玄妙观', '玄妙观社区医院') !== null);
-check('机关：exclusionKindOf 返回 institution',
-  (M.exclusionKindOf('玄妙观', '玄妙观村委会') || {}).kind === 'institution');
+// #23 之后「村委会」优先被归入 community（同为行政点、同一条硬压路径），断言按语义接受两种类别
+check('机关：exclusionKindOf 返回 institution 或 community',
+  ['institution', 'community'].indexOf((M.exclusionKindOf('玄妙观', '玄妙观村委会') || {}).kind) >= 0);
 
 // ③/④/⑤ pick 行为
 check('pick：只有商户候选 → 未匹配', pickName('玄妙观', [{ name: '玄妙观宰鸡店' }]) === null);

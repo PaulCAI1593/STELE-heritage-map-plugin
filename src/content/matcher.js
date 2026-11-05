@@ -158,7 +158,16 @@
     '学校', '小学', '中学', '大学', '学院', '幼儿园',
     '医院', '党校', '法院', '检察院',
   ];
+  // #23：行政社区/服务站后缀（候选名整体以这些词结尾即行政点）。
+  //   真实日志：宛城区东关街道玄妙观社区 / 玄妙观社区居委会 /
+  //   东关街道玄妙观社区退役军人服务站 —— 都借「玄妙观」当前缀，但都不是道观本体。
+  //   顺序按长度倒排：先匹配「社区居委会」「退役军人服务站」「党群服务中心」，再退到短词。
+  const COMMUNITY_SUFFIX_WORDS = [
+    '社区居委会', '退役军人服务站', '党群服务中心',
+    '居委会', '村委会', '社区', '服务站',
+  ];
   const FACILITY_SIMADJ_CAP = 0.5; // 设施/商户/机关点上限：低于强证据线 0.85，也低于本体常见分
+  const COORD_DRIFT_MAX_DIST = 10000; // #24：3–10 km 的完全同名点按本体采用（卡片标注偏差）
 
   /** 同一目标名下的候选剩余部分（原始名与规范化名两路；剥掉开头噪声后缀）。 */
   function remaindersOf(targetName, candName) {
@@ -215,9 +224,31 @@
     return '';
   }
 
+  /** 候选是行政社区/服务站（#23）：候选名整体以社区/居委会/服务站等结尾。 */
+  function communitySuffixOf(candName) {
+    const names = [stripParen(String(candName == null ? '' : candName).trim()), normalizeName(candName)];
+    for (const n of names) {
+      if (!n) continue;
+      for (const w of COMMUNITY_SUFFIX_WORDS) {
+        if (n.length > w.length && n.endsWith(w)) return w;
+      }
+    }
+    return '';
+  }
+
+  function isCommunity(candName) { return communitySuffixOf(candName) !== ''; }
+
+  /** 规范化名等同（#24 同名优先）。 */
+  function isExactName(targetName, candName) {
+    const t = normalizeName(targetName), c = normalizeName(candName);
+    return !!t && t === c;
+  }
+
   function isMerchant(targetName, candName) { return merchantSuffixOf(targetName, candName) !== ''; }
   function isInstitution(targetName, candName) { return institutionSuffixOf(targetName, candName) !== ''; }
   function exclusionKindOf(targetName, candName) {
+    const cw = communitySuffixOf(candName);
+    if (cw) return { kind: 'community', word: cw };
     const fw = facilitySuffixOf(targetName, candName);
     if (fw) return { kind: 'facility', word: fw };
     const mw = merchantSuffixOf(targetName, candName);
@@ -578,7 +609,9 @@
     const facilityWord = facilitySuffixOf(targetName, cName);
     const merchantWord = merchantSuffixOf(targetName, cName);
     const institutionWord = institutionSuffixOf(targetName, cName);
-    const excludeKind = facilityWord ? 'facility' : (merchantWord ? 'merchant' : (institutionWord ? 'institution' : ''));
+    const communityWord = communitySuffixOf(cName);
+    const excludeKind = communityWord ? 'community'
+      : (facilityWord ? 'facility' : (merchantWord ? 'merchant' : (institutionWord ? 'institution' : '')));
     const facility = excludeKind !== '';
     if (facility) simAdj = Math.min(simAdj, FACILITY_SIMADJ_CAP);
 
@@ -595,16 +628,21 @@
     if (ADMIN_SUFFIX_RE.test(cName)) mult *= 0.85;
 
     const subPen = subUnitPenalty(tVars, cName, targetName);
+    const isSub = subPen < 1;
     const custPen = o.penFn ? (o.penFn(c) || 1) : 1;
     const prior = SOURCE_PRIOR[source] || 1;
+    // #24：完全同名（规范化名相等，或 sim≥0.98 且无子单元标记）——3–10 km 也按本体采用。
+    // 借用名（商户/行政/设施）永远不算同名本体。
+    const exactName = !excludeKind &&
+      (isExactName(targetName, cName) || (sim >= 0.98 && !isSub));
     const score = (simAdj * 0.6 + distScore * 0.4) * mult * subPen * custPen * prior;
     return {
       poi: c, sim, simAdj, dist, distScore, typeRank, mult, score,
-      isSub: subPen < 1, subPen, pen: custPen,
+      isSub, subPen, pen: custPen,
       source, sourcePrior: prior, absence,
       core: ev.core, prefixLen: ev.prefixLen, suffixLen: ev.suffixLen,
-      coverRatio: ev.coverRatio, abstain: !!ev.abstain,
-      facility, facilityWord, excludeKind, merchantWord, institutionWord,
+      coverRatio: ev.coverRatio, abstain: !!ev.abstain, exactName,
+      facility, facilityWord, excludeKind, merchantWord, institutionWord, communityWord,
       merchant: !!merchantWord, institution: !!institutionWord,
     };
   }
@@ -616,6 +654,9 @@
     subUnitPenalty,
     isFacility,
     isMerchant,
+    isCommunity,
+    isExactName,
+    COORD_DRIFT_MAX_DIST,
     isInstitution,
     exclusionKindOf,
     haversine,
@@ -683,6 +724,8 @@
             prefixLen: sc.prefixLen,
             suffixLen: sc.suffixLen,
             core: sc.core,
+            exactName: !!sc.exactName,
+            excludeKind: sc.excludeKind || '',
             facility: sc.facility,
             facilityWord: sc.facilityWord,
           });

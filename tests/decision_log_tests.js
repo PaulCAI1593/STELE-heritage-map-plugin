@@ -136,10 +136,11 @@ const log = global.window.HMP.decisionLog;
   check('v2：按 score 降序、同分按 dist',
     v2.routes.name.candidates.map(c => c.score).join() === '0.93,0.88,0.81,0.72,0.65',
     v2.routes.name.candidates.map(c => c.score).join());
-  const KEYS = ['name', 'sim', 'simAdj', 'dist', 'distScore', 'typeRank', 'subPen', 'pen', 'source', 'score'];
-  check('v2：候选字段集恰为契约 10 项',
+  // #24：契约加 exactName（schema 仍为 2）；coordinateDriftKm 仅在 3–10 km 同名命中时出现，属可选字段
+  const KEYS = ['name', 'sim', 'simAdj', 'dist', 'distScore', 'typeRank', 'subPen', 'pen', 'source', 'score', 'exactName'];
+  check('v2：候选必备字段集为契约 11 项（+ #24 exactName，可选 coordinateDriftKm）',
     v2.routes.name.candidates.every(c => KEYS.every(k => k in c)) &&
-    v2.routes.name.candidates.every(c => Object.keys(c).length === KEYS.length),
+    v2.routes.name.candidates.every(c => Object.keys(c).length >= KEYS.length && Object.keys(c).length <= KEYS.length + 1),
     JSON.stringify(Object.keys(v2.routes.name.candidates[0])));
   check('v2：commit L 的 simAdj 恒等 sim',
     v2.routes.name.candidates.every(c => c.simAdj === c.sim) && v2.final.simAdj === v2.final.sim,

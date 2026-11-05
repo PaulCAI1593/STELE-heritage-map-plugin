@@ -64,6 +64,14 @@
   color: #6b6b6b;
 }
 
+/* #24 同名地点坐标偏差小字：12px，#707070（对比度 4.95:1） */
+#hmp-opening-card .hmp-sub-note.hmp-drift-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #707070;
+}
+
 /* 证据行（命中态小字 / 未匹配必显）：12px 也要过 4.5:1 */
 #hmp-opening-card .hmp-evidence {
   margin: 5px 0 6px;

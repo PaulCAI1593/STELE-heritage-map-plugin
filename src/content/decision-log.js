@@ -76,14 +76,28 @@
     return Math.max(0, 1 - (dist - 30) / 1500);
   }
 
+  /** #24：同名判定用的规范化（去括号补充、去空白；与 matcher 同一口径的近似）。 */
+  function normName(s) {
+    return String(s == null ? '' : s)
+      .replace(/[（(][^）)]*[）)]/g, '')
+      .replace(/\s+/g, '')
+      .trim();
+  }
+
   /** 候选统一成 v2 字段；score 缺失时按 0 排（不猜分数） */
-  function normalizeCandidate(raw, source, fallbackSource) {
+  function normalizeCandidate(raw, source, fallbackSource, steleName) {
     const c = raw || {};
     const poi = c.poi || {};
     const name = clipName(c.name != null ? c.name : (poi.name != null ? poi.name : ''));
     const sim = Number.isFinite(c.sim) ? c.sim
       : (Number.isFinite(c.nameSim) ? c.nameSim : null);
     const dist = roundDist(c.dist);
+    const isSub = c.isSub === true || (Number.isFinite(c.subPen) && c.subPen < 1);
+    // 借用名（excludeKind 非空：商户/行政/设施）不算同名本体。
+    const excluded = !!c.excludeKind;
+    const exact = !excluded && (c.exactName === true
+      || (!!normName(steleName) && normName(name) === normName(steleName))
+      || (Number.isFinite(sim) && sim >= 0.98 && !isSub));
     return {
       name,
       sim: num(sim),
@@ -97,6 +111,9 @@
       pen: num(c.pen),
       source: source || fallbackSource || c.source || null,
       score: num(c.score),
+      // #24：同名优先的数据基础（不改变评分，只记录）
+      exactName: !!exact,
+      ...(c.coordinateDriftKm == null ? {} : { coordinateDriftKm: num(c.coordinateDriftKm) }),
     };
   }
 
@@ -112,10 +129,10 @@
   }
 
   /** 一路的统计 → {candCount,bestSim,candidates[top5]} */
-  function normalizeRoute(route, source) {
+  function normalizeRoute(route, source, steleName) {
     const r = route || {};
     const all = (Array.isArray(r.candidates) ? r.candidates : [])
-      .map(c => normalizeCandidate(c, source));
+      .map(c => normalizeCandidate(c, source, undefined, steleName));
     const sorted = sortCandidates(all);
     const best = sorted.length ? sorted[0].sim : null;
     return {
@@ -147,9 +164,9 @@
         tier: stele.tier == null ? null : clipName(stele.tier),
       },
       routes: {
-        name: normalizeRoute((e.routes || {}).name, 'name'),
-        address: normalizeRoute((e.routes || {}).address, 'address'),
-        nearby: normalizeRoute((e.routes || {}).nearby, 'nearby'),
+        name: normalizeRoute((e.routes || {}).name, 'name', stele.name),
+        address: normalizeRoute((e.routes || {}).address, 'address', stele.name),
+        nearby: normalizeRoute((e.routes || {}).nearby, 'nearby', stele.name),
       },
       // 兼容字段（v1 阅读习惯；不影响 v2 语义）
       ...(e.time == null ? {} : { time: e.time }),
@@ -164,6 +181,10 @@
         distScore: num(Number.isFinite(fin.distScore) ? fin.distScore : distScoreOf(fin.dist)),
         score: num(fin.score),
         source: fin.source == null ? null : String(fin.source),
+        // #24：同名优先 + 3–10 km 坐标偏差（1 位小数，越界不记）
+        exactName: fin.exactName === true,
+        ...(Number.isFinite(fin.coordinateDriftKm) && fin.coordinateDriftKm > 0 && fin.coordinateDriftKm <= 10
+          ? { coordinateDriftKm: Math.round(fin.coordinateDriftKm * 10) / 10 } : {}),
         why: normalizeWhy(fin.why),
       } : null,
     };

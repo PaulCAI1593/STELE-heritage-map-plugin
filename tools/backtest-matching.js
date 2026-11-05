@@ -107,12 +107,30 @@ function pickTop1(matcher, c, kp, ks) {
   const pool = (c.candidates || []).filter(x => {
     if (rankOf(x) === 0) return false;
     if (tLon != null && tLat != null && Number.isFinite(x.lon) && Number.isFinite(x.lat)) {
-      if (distM(tLon, tLat, x.lon, x.lat) > NAME_MAX_DIST) return false;
+      // #24：完全同名候选在 3–10 km 内也进入池（业务侧同样放宽），其余仍按 NAME_MAX_DIST。
+      const exact = typeof matcher.isExactName === 'function' && matcher.isExactName(c.steleName, x.name);
+      const limit = exact ? (matcher.COORD_DRIFT_MAX_DIST || 10000) : NAME_MAX_DIST;
+      if (distM(tLon, tLat, x.lon, x.lat) > limit) return false;
     }
     return true;
   });
   const m = matcher.pick(target, pool, { rank: rankOf, dump });
-  if (!m) return { pick: null, dump };
+  if (!m) {
+    // #24：pick 内部仍按 passes(sim,dist) 过滤（>3 km 必拒）。完全同名 + 3–10 km
+    // 走的是业务侧「统一评分」的放宽路径，这里按 dump 复现同一选择规则。
+    const cands = dump.filter(d => d.exactName).sort((a, b) => (b.score || 0) - (a.score || 0));
+    if (!cands.length) return { pick: null, dump };
+    const b = cands[0];
+    return {
+      pick: {
+        actualPick: b.name, score: Number.isFinite(b.score) ? Math.round(b.score * 1e6) / 1e6 : null,
+        source: c.route || null, sim: Number.isFinite(b.sim) ? Math.round(b.sim * 1e6) / 1e6 : null,
+        simAdj: Number.isFinite(b.simAdj) ? Math.round(b.simAdj * 1e6) / 1e6 : null,
+        dist: Number.isFinite(b.dist) ? Math.round(b.dist) : null,
+      },
+      dump,
+    };
+  }
   return {
     pick: {
       actualPick: m.poi && m.poi.name ? m.poi.name : null,

@@ -383,6 +383,13 @@
       children.push(line);
     }
 
+    // #24：同名地点在 3–10 km 时的坐标偏差提示（12px，沿用证据小字样式）
+    if (state.coordinateDriftKm != null) {
+      children.push(el('div', { className: 'hmp-sub-note hmp-drift-note' },
+        '同名地点，坐标偏差约 ' + Number(state.coordinateDriftKm).toFixed(1) +
+        ' 公里（位置以点位地址为准）'));
+    }
+
     // 三路证据（小字）：名称/地址/坐标各有多少候选、最高相似度多少
     children.push(buildEvidenceNote(state.evidenceText, true));
 
@@ -1565,10 +1572,15 @@
           for (const cd of p.list) {
             const cand = cd && cd.poi;
             if (!cand) continue;
+            // #24：完全同名候选放宽到 10 km（卡片标注坐标偏差），其余仍按 NAME_MAX_DIST/GROUP_NAME_MAX_DIST。
+            const exactCand = !!cd.exactName ||
+              (window.HMP.matcher.isExactName && window.HMP.matcher.isExactName(poi.name, cand.name));
             // 既有闸门不变（阈值不动）：远同名/借名/子单元、借名住宅、非文物类坐标。
             if (p.src === 'name') {
               if (!window.HMP.matcher.passes(cd.sim, cd.dist)) continue;
-              if (Number.isFinite(cd.dist) && cd.dist > distLimit) continue;
+              const hardLimit = exactCand
+                ? (window.HMP.matcher.COORD_DRIFT_MAX_DIST || 10000) : distLimit;
+              if (Number.isFinite(cd.dist) && cd.dist > hardLimit) continue;
               if (borrowedNamePenalty(poi.name, cand) < 1) continue;
               if (window.HMP.matcher.subUnitPenalty &&
                   window.HMP.matcher.subUnitPenalty(tv, cand.name, poi.name) < 1) continue;
@@ -1585,7 +1597,12 @@
               ...refPt, source: p.src, rankFn: heritageRank,
               penFn: () => (Number.isFinite(cd.pen) ? cd.pen : 1),
             });
-            if (!best || sc.score > best.sc.score) best = { src: p.src, sc };
+            // #24 同名优先：完全同名候选优先于非同名（借用名/近邻点不得靠距离分胜出）；
+            // 同名之间仍按统一分取高。
+            const better = !best
+              || (exactCand && !best.exact)
+              || (exactCand === best.exact && sc.score > best.sc.score);
+            if (better) best = { src: p.src, sc, exact: exactCand };
           }
         }
         return best;
@@ -1594,7 +1611,12 @@
       if (unified) {
         const sc = unified.sc;
         const srcLabel = { name: '名称', address: '地址', nearby: '坐标' }[unified.src];
-        const level = '三路统一评分（来源 ' + srcLabel + '，score ' +
+        // #24：3–10 km 的完全同名点采用，并记坐标偏差（1 位小数）。
+        const driftKm = (unified.exact && Number.isFinite(sc.dist) && sc.dist > NAME_MAX_DIST)
+          ? Math.round(sc.dist / 100) / 10 : null;
+        const level = (driftKm
+          ? '同名地点（坐标偏差约 ' + driftKm.toFixed(1) + ' 公里）· '
+          : '') + '三路统一评分（来源 ' + srcLabel + '，score ' +
           sc.score.toFixed(3) + '，simAdj ' + sc.simAdj.toFixed(3) + '）';
         why.push(level + '：sim ' + sc.sim.toFixed(2) + '×缺席 ' + sc.absence.toFixed(2) +
           '（前缀-' + sc.prefixLen + '/后缀-' + sc.suffixLen + '字）×类型 ' +
@@ -1618,6 +1640,7 @@
           matched: {
             poi: sc.poi, sim: sc.sim, simAdj: sc.simAdj, dist: sc.dist,
             distScore: sc.distScore, score: sc.score, source: unified.src,
+            exactName: !!unified.exact, coordinateDriftKm: driftKm,
           },
           info: api && typeof api.extract === 'function' ? api.extract(sc.poi) : undefined,
           provider,
@@ -1964,6 +1987,8 @@
         provider: result.provider,
         matchType: result.matchType || 'name',
         dist: Number.isFinite(result.dist) ? Math.round(result.dist) : null,
+        coordinateDriftKm: (result.matched && result.matched.coordinateDriftKm != null)
+          ? result.matched.coordinateDriftKm : null,
         fallbackNote,
         verifiedBy: result.verifiedBy || null,
         supplementedBy: result.supplementedBy || null,
@@ -2014,7 +2039,14 @@
     // schema 2（#14-L）：三路 top5 候选 + 分项；旧字段 time/site 保留给人工阅览。
     const why = [];
     const note = diag && diag.providerNotes && diag.providerNotes[provider];
-    if (note) why.push(note);
+    // #23：失败原因只在未命中时写。原实现无论成败都把「…但未通过校验」写进来，
+    // 日志里会出现「已选中某点 + 有候选但未通过校验」的自相矛盾。
+    if (note && !m) why.push('未命中：' + note);
+    if (m && finalPoi) {
+      why.push('选中「' + finalPoi + '」（来源 ' + (m.source || result.matchType || 'name') +
+        '，sim ' + (Number.isFinite(m.sim) ? m.sim.toFixed(3) : '?') +
+        (Number.isFinite(m.dist) ? '，直线 ' + Math.round(m.dist) + ' m' : '') + '）');
+    }
     if (diag && diag.fallbackFrom) why.push('已从' + diag.fallbackFrom + '回退到' + provider);
     // #14-S：统一评分的各步权重/来源写进 why[]，供决策日志解释。
     if (diag && diag.decisionWhy && Array.isArray(diag.decisionWhy[provider])) {
@@ -2048,6 +2080,8 @@
         distScore,
         score: Number.isFinite(m.score) ? m.score : null,
         source: m.source || result.matchType || 'name',
+        exactName: !!(m && m.exactName),
+        coordinateDriftKm: (m && m.coordinateDriftKm != null) ? m.coordinateDriftKm : null,
         why,
       } : null,
       // 兼容字段：旧版阅读习惯/旧测试断言仍能看到时间、点位、家、选用路
@@ -2075,6 +2109,7 @@
         providerLabel: provider === 'amap' ? '高德地图' : '百度地图',
         matchType: cacheData.matchType || 'name',
         matchDist: cacheData.dist || null,
+        coordinateDriftKm: cacheData.coordinateDriftKm == null ? null : cacheData.coordinateDriftKm,
         fallbackNote: cacheData.fallbackNote || '',
         verifiedBy: cacheData.verifiedBy || null,
         supplementedBy: cacheData.supplementedBy || null,
