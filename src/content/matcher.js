@@ -124,6 +124,58 @@
   // （博物馆/游客中心…），不应盖过目标本体。
   const FACILITY_SUFFIX = /^(?:博物馆|博物院|纪念馆|展览馆|陈列馆|游客中心|服务中心|售票处|管理处|研究院|研究所|停车场|商店|餐厅|广场|入口|出口|大门|遗址公园)/;
   const FACILITY_PENALTY = 0.85; // 衍生点降权
+  // #14-S2：设施/附属点判定（比 FACILITY_PENALTY 更硬）。
+  //   规范化后 STELE 名是候选名的**前缀**，且剩余后缀以设施/附属词开头
+  //   ⇒ 该候选是本体内的服务设施（游客服务中心、停车场、派出所…），
+  //     永远不能当本体、也不能当强证据：simAdj 直接压到 ≤0.5 且不给类型加成。
+  //   例：承德避暑山庄及其周围寺庙 → 承德避暑山庄及其周围寺庙游客服务中心
+  //   反例（不受影响）：故宫 → 故宫博物院（规范化后候选 = 故宫，剩余为空）
+  const FACILITY_WORDS = [
+    // 服务/附属设施：这类后缀表示“本体里的某个服务点”，永远不是本体。
+    '游客服务中心', '游客中心', '服务中心', '警务工作站', '警务站', '派出所',
+    '停车场', '售票处', '检票口', '入口', '出口', '大门', '索道', '缆车',
+    '码头', '商店', '餐厅', '厕所', '公交站', '地铁站', '车站',
+    '管委会', '管理处', '管理局', '研究院', '研究所', '度假村',
+    // 注：博物馆/博物院/纪念馆/展览馆/陈列馆/广场/遗址公园 **不列入**。
+    // 这些是“身份词”而非服务设施（故宫→故宫博物院、良渚古城遗址公园 都是本体自身），
+    // 列入会把合法本体一起拒掉（S2 实测 A01 故宫会变未匹配）。
+  ];
+  const FACILITY_SIMADJ_CAP = 0.5; // 设施点上限：低于强证据线 0.85，也低于本体常见分
+
+  /** 候选名相对目标名的“设施后缀词”；不是设施点则返回 ''。 */
+  function facilitySuffixOf(targetName, candName) {
+    const tRaw = stripParen(String(targetName == null ? '' : targetName).trim());
+    const cRaw = stripParen(String(candName == null ? '' : candName).trim());
+    const pairs = [
+      [cRaw, tRaw],
+      [normalizeName(targetName), normalizeName(candName)],
+    ];
+    for (const [c, t] of pairs) {
+      if (!t || !c || c.length <= t.length) continue;
+      if (!c.startsWith(t)) continue;
+      let rest = c.slice(t.length).trim();
+      if (!rest) continue;
+      // 规范化后目标名可能已去掉「遗址/公园/景区」等噪声词，
+      // 候选剩余部分会以这些词开头（良渚遗址-莫角山遗址 + 游客服务中心）——
+      // 先剥掉开头的噪声词再看设施词。
+      for (let i = 0; i < 2; i++) {
+        const before = rest;
+        for (const w of NOISE_SUFFIX_WORDS) {
+          if (rest.startsWith(w) && rest.length > w.length) { rest = rest.slice(w.length); break; }
+        }
+        if (rest === before) break;
+      }
+      for (const w of FACILITY_WORDS) {
+        if (rest.startsWith(w)) return w;
+      }
+    }
+    return '';
+  }
+  /** 候选是否为“本体 + 设施后缀”的设施点（#14-S2）。 */
+  function isFacility(targetName, candName) {
+    return facilitySuffixOf(targetName, candName) !== '';
+  }
+
   const CONTAIN_BONUS = 0.06;    // 候选是目标的"简短常用名"时加权
   const CONTAIN_IN_CAND = 0.9;   // 候选名把目标名整段包住时的相似度下限（见 pairScore）
   // 目标名落在候选的**括号里**时的降权：括号里写的是"位置"，不是"身份"。
@@ -459,11 +511,16 @@
       simAdj = Math.max(0, Math.min(1, sim * absence));
     }
 
+    // #14-S2：设施点硬压。simAdj ≤0.5 ⇒ 必然低于 NAME_STRONG_SIM，不吃类型加成。
+    const facilityWord = facilitySuffixOf(targetName, cName);
+    const facility = facilityWord !== '';
+    if (facility) simAdj = Math.min(simAdj, FACILITY_SIMADJ_CAP);
+
     let typeRank = 0, mult = 1;
     if (o.rankFn) {
       typeRank = o.rankFn(c) || 0;
       if (INSTITUTION_RE.test(cName)) typeRank = 1;
-      if (simAdj >= CALIBRATION.NAME_STRONG_SIM) {
+      if (!facility && simAdj >= CALIBRATION.NAME_STRONG_SIM) {
         mult = typeRank === 2 ? 1.12 : (typeRank === 0 ? 0.7 : 1.0);
       }
     } else if (INSTITUTION_RE.test(cName)) {
@@ -481,6 +538,7 @@
       source, sourcePrior: prior, absence,
       core: ev.core, prefixLen: ev.prefixLen, suffixLen: ev.suffixLen,
       coverRatio: ev.coverRatio, abstain: !!ev.abstain,
+      facility, facilityWord,
     };
   }
 
@@ -489,6 +547,7 @@
     levenshteinSimilarity,
     nameScore,
     subUnitPenalty,
+    isFacility,
     haversine,
     passes,
 
@@ -554,6 +613,8 @@
             prefixLen: sc.prefixLen,
             suffixLen: sc.suffixLen,
             core: sc.core,
+            facility: sc.facility,
+            facilityWord: sc.facilityWord,
           });
         }
       }
@@ -561,6 +622,9 @@
       // 依次取第一个"可接受"的候选。
       // 注意可接受性仍用**原始名称相似度**判定，类型偏好只影响排序，不降低门槛。
       for (const s of scored) {
+        // #14-S2：设施点（本体+游客服务中心/警务站/停车场…）永不当结果：
+        // 这类候选只在“本体不存在”时才会赢，宁可未匹配也不认。
+        if (s.facility) continue;
         if (passes(s.sim, s.dist)) return s;
       }
       return null;

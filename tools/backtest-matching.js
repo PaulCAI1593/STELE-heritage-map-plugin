@@ -141,20 +141,28 @@ function classifyABeforeAfter(before, after, expected) {
   return { same: ok, correct };
 }
 
-function computeRates(casesB) {
+function computeRates(casesB, matcher) {
   let institutionHit = 0, homonymFalsePick = 0, homonymReject = 0, homonymTotal = 0;
+  let facilityHit = 0;
   for (const c of casesB) {
+    // runOnce 写的是扁平字段（actualPick 在顶层）；旧版读 c.after.* 恒为 undefined，
+    // 导致 B 集机构/同名命中永远统计为 0（总监复验时发现的口径问题）。
+    const pickName = c.actualPick !== undefined ? c.actualPick : (c.after ? c.after.actualPick : null);
+    const fac = !!(pickName && isFacilityPick(matcher, c.steleName, pickName));
+    if (fac) facilityHit++;
     if (c.kind === 'institution') {
-      if (c.after && c.after.actualPick) institutionHit++;
+      // 设施点不算“机构命中”（它是本体的服务设施，不是办事机构）
+      if (pickName && !fac) institutionHit++;
     } else if (c.kind === 'homonym') {
       homonymTotal++;
-      if (c.after && c.after.actualPick) homonymFalsePick++;
+      if (pickName && !fac) homonymFalsePick++;
       else homonymReject++;
     }
   }
   return {
     institutionHit,
     homonymFalsePick,
+    facilityHit,
     homonymRejectRate: homonymTotal ? Math.round((homonymReject / homonymTotal) * 1000) / 1000 : null,
   };
 }
@@ -176,7 +184,7 @@ function runOnce(opts, matcher) {
   for (const c of data.A || []) {
     const r = pickTop1(matcher, c, opts.kp, opts.ks);
     cases.A.push({
-      id: c.id, steleName: c.steleName, expected: c.expected,
+      id: c.id, steleName: c.steleName, expected: c.expected, alias: !!c.alias,
       ...(r.pick || { actualPick: null, score: null, source: c.route || null, sim: null, simAdj: null, dist: null }),
       topCandidates: r.dump.slice(0, 5),
     });
@@ -214,11 +222,23 @@ function diffTop1(before, after) {
   return { diff, pairs };
 }
 
-function summarizeA(cases) {
-  const counts = { correct: 0, wrong: 0, unmatched: 0 };
+function isFacilityPick(matcher, steleName, pickName) {
+  if (!pickName || !matcher || typeof matcher.isFacility !== 'function') return false;
+  return matcher.isFacility(steleName, pickName) === true;
+}
+
+// #14-S2：A 集统计必须看“选到的实体”，不能只看有没有 pick。
+//   facilityHit：选中的是本体+设施后缀（游客服务中心/停车场…），不计 correct。
+function summarizeA(cases, matcher) {
+  const counts = { correct: 0, wrong: 0, unmatched: 0, facilityHit: 0, alias: 0 };
   for (const c of cases) {
+    // D-081：别名点单列，不进 A 的正确率硬约束
+    if (c.alias) { counts.alias++; continue; }
     if (!c.actualPick) counts.unmatched++;
-    else if (c.expected === 'correct') counts.correct++;
+    else if (isFacilityPick(matcher, c.steleName, c.actualPick)) {
+      counts.facilityHit++;
+      counts.wrong++;
+    } else if (c.expected === 'correct') counts.correct++;
     else counts.wrong++;
   }
   return counts;
@@ -263,7 +283,7 @@ function main() {
     const before = opts.beforeSrc ? runOnce({ ...opts, kp: g.kp, ks: g.ks }, beforeMatcher) : after;
     const d = diffTop1(before, after);
     if (!firstResult) firstResult = { after, before, d, params: g };
-    sweepRows.push({ kp: g.kp, ks: g.ks, A: summarizeA(after.A), B: computeRates(after.B), top1Diff: d.diff });
+    sweepRows.push({ kp: g.kp, ks: g.ks, A: summarizeA(after.A, afterMatcher), B: computeRates(after.B, afterMatcher), top1Diff: d.diff });
   }
 
   const hard = [];
@@ -278,9 +298,9 @@ function main() {
     stage: opts.stage,
     params: { kp: opts.kp, ks: opts.ks, floorP: 0.35, floorS: 0.6, strong: opts.strong },
     commit: commitOf(ROOT),
-    A: { counts: summarizeA(firstResult ? firstResult.after.A : []), cases: firstResult ? firstResult.after.A : [] },
+    A: { counts: summarizeA(firstResult ? firstResult.after.A : [], afterMatcher), cases: firstResult ? firstResult.after.A : [] },
     B: {
-      counts: computeRates(firstResult ? firstResult.after.B : []),
+      counts: computeRates(firstResult ? firstResult.after.B : [], afterMatcher),
       cases: firstResult ? firstResult.after.B : [],
     },
     C: firstResult ? firstResult.after.C : { before: null, after: null },
@@ -301,19 +321,20 @@ function main() {
   let strongSweep = null;
   if (opts.stage === 'S') {
     const beforeCounts = opts.beforeSrc
-      ? summarizeA(runOnce({ ...opts, kp: opts.kp, ks: opts.ks }, beforeMatcher).A) : null;
+      ? summarizeA(runOnce({ ...opts, kp: opts.kp, ks: opts.ks }, beforeMatcher).A, afterMatcher) : null;
     const aCounts = result.A.counts;
     if (beforeCounts && aCounts.correct < beforeCounts.correct) {
       hard.push('A 集正确数下降：' + beforeCounts.correct + ' → ' + aCounts.correct);
     }
     if (result.B.counts.institutionHit !== 0) hard.push('B 集机构命中 ' + result.B.counts.institutionHit + '（要求 0）');
+    if (result.B.counts.facilityHit !== 0) hard.push('B 集设施命中 ' + result.B.counts.facilityHit + '（要求 0）');
     if (result.B.counts.homonymFalsePick !== 0) hard.push('B 集远同名误选 ' + result.B.counts.homonymFalsePick + '（要求 0）');
     const cPick = result.C && result.C.after ? result.C.after.actualPick : null;
     if (cPick && /警务/.test(cPick)) hard.push('C 集仍选中警务机构：' + cPick);
     strongSweep = [];
     for (const st of [0.75, 0.80, 0.85]) {
       const r = runOnce({ ...opts, kp: opts.kp, ks: opts.ks, strong: st }, afterMatcher);
-      strongSweep.push({ strong: st, A: summarizeA(r.A), B: computeRates(r.B), C: r.C ? r.C.after : null });
+      strongSweep.push({ strong: st, A: summarizeA(r.A, afterMatcher), B: computeRates(r.B, afterMatcher), C: r.C ? r.C.after : null });
     }
     result.strongSweep = strongSweep;
     result.beforeCounts = beforeCounts;
@@ -322,7 +343,7 @@ function main() {
       const key = (kp, ks) => kp.toFixed(2) + '/' + ks.toFixed(2);
       const cells = new Map(sweepRows.map(r => [key(r.kp, r.ks), r]));
       const maxCorrect = Math.max(...sweepRows.map(r => r.A.correct));
-      const okSet = new Set(sweepRows.filter(r => r.A.correct === maxCorrect && r.B.institutionHit === 0).map(r => key(r.kp, r.ks)));
+      const okSet = new Set(sweepRows.filter(r => r.A.correct === maxCorrect && r.B.institutionHit === 0 && r.B.facilityHit === 0).map(r => key(r.kp, r.ks)));
       const kps = [...new Set(sweepRows.map(r => r.kp))].sort((a, b) => a - b);
       const kss = [...new Set(sweepRows.map(r => r.ks))].sort((a, b) => a - b);
       const seen = new Set();
@@ -347,7 +368,7 @@ function main() {
       blocks.sort((a, b) => b.size - a.size);
       const gridJson = {
         stage: 'S', params: { kp: opts.kp, ks: opts.ks, strong: opts.strong },
-        criteria: 'A.correct 最大 且 B.institutionHit=0',
+        criteria: 'A.correct 最大 且 B.institutionHit=0 且 B.facilityHit=0',
         groups: sweepRows.length, maxCorrect,
         blocks, largestBlock: blocks.length ? blocks[0].size : 0,
         rows: sweepRows,
@@ -371,11 +392,11 @@ function main() {
     '- top1 差异：**' + top1Diff + '** 条（硬约束 = 0）',
     '- 说明：' + result.metadata.stageNote,
     '',
-    '## A 集（' + result.A.counts.correct + ' 正确 / ' + result.A.counts.wrong + ' 错误 / ' + result.A.counts.unmatched + ' 未匹配）',
+    '## A 集（' + result.A.counts.correct + ' 正确 / ' + result.A.counts.wrong + ' 错误 / ' + result.A.counts.unmatched + ' 未匹配 / ' + result.A.counts.facilityHit + ' 设施误配）',
     '',
     mdTable(firstResult ? firstResult.d.pairs.filter(p => (firstResult.after.A || []).some(a => a.id === p.id)) : []),
     '',
-    '## B 集（机构命中 ' + result.B.counts.institutionHit + ' / 远同名误选 ' + result.B.counts.homonymFalsePick + ' / 拒识率 ' + result.B.counts.homonymRejectRate + '）',
+    '## B 集（机构命中 ' + result.B.counts.institutionHit + ' / 设施命中 ' + result.B.counts.facilityHit + ' / 远同名误选 ' + result.B.counts.homonymFalsePick + ' / 拒识率 ' + result.B.counts.homonymRejectRate + '）',
     '',
     '| id | stele | 期望 | after top1 |',
     '|---|---|---|---|',
