@@ -703,6 +703,74 @@ function resetDoc() {
     check("卡片里不出现「票价」行", !t.includes("票价"), t.slice(0, 140));
   }
 
+  // ============ 6c. 远距离提示（#26） ============
+  console.log('\n=== 6c. 距离提示（#26） ===');
+  {
+    // 纯函数边界：>3 km 才算，1 位小数（与 final.coordinateDistanceKm 同口径）
+    check('distanceKmOf：3000 m 不算（边界内）', CARD.distanceKmOf(3000) === null);
+    check('distanceKmOf：3001 m → 3.0', CARD.distanceKmOf(3001) === 3);
+    check('distanceKmOf：3400 m → 3.4', CARD.distanceKmOf(3400) === 3.4);
+    check('distanceKmOf：6672 m → 6.7', CARD.distanceKmOf(6672) === 6.7);
+    check('distanceKmOf：null / NaN 不抛错、返回 null',
+      CARD.distanceKmOf(null) === null && CARD.distanceKmOf(NaN) === null);
+
+    const notesIn = (root) => {
+      const out = [];
+      const walk = (n) => {
+        if (n.nodeType === 1) {
+          if (n.attrs && n.attrs['data-hmp-note']) out.push(n);
+          for (const c of (n.children || [])) walk(c);
+        }
+      };
+      walk(root);
+      return out;
+    };
+
+    const renderNote = async (state) => {
+      resetDoc();
+      const p = buildSitePanel({ withBasicId: true });
+      docEls.body.appendChild(p.modal);
+      CARD.renderState(Object.assign({
+        card: 'single', kind: 'found', provider: 'amap', providerLabel: '高德地图',
+        matchType: 'name', siteName: '玄妙观',
+        info: { name: '玄妙观', opentimeWeek: '08:00-17:00' },
+        amapSearchUrl: '#', baiduSearchUrl: '#',
+      }, state));
+      await sleep(80);
+      const card = document.getElementById(CARD_ID);
+      return { card, notes: notesIn(card), text: collectText(card) };
+    };
+
+    const exact = await renderNote({ coordinateDriftKm: 6.7, matchDist: 6672, distanceKm: 6.7 });
+    check('exact 6.7 km：出偏差提示且带 data-hmp-note="drift"',
+      exact.notes.length === 1 && exact.notes[0].attrs['data-hmp-note'] === 'drift',
+      JSON.stringify(exact.notes.map(n => n.attrs['data-hmp-note'])));
+    check('exact 6.7 km：文案为偏差提示',
+      exact.text.includes('同名地点，坐标偏差约 6.7 公里（位置以点位地址为准）'), exact.text.slice(0, 200));
+    check('exact 6.7 km：不出通用距离提示（不重复）',
+      exact.notes.length === 1 && !exact.text.includes('请核对是否同一处'), exact.text.slice(0, 200));
+
+    const far = await renderNote({ coordinateDriftKm: null, matchDist: 3400, distanceKm: 3.4 });
+    check('非 exact 3.4 km：出通用提示且带 data-hmp-note="distance"',
+      far.notes.length === 1 && far.notes[0].attrs['data-hmp-note'] === 'distance',
+      JSON.stringify(far.notes.map(n => n.attrs['data-hmp-note'])));
+    check('非 exact 3.4 km：文案为核对提示',
+      far.text.includes('该地点距点位约 3.4 公里，请核对是否同一处'), far.text.slice(0, 220));
+    check('非 exact 3.4 km：不出偏差文案',
+      !far.text.includes('同名地点，坐标偏差约'), far.text.slice(0, 220));
+
+    // 2.9 km 时上游 distanceKmOf() 给 null（见上方边界用例），渲染层不应再出提示
+    const near = await renderNote({ coordinateDriftKm: null, matchDist: 2900, distanceKm: null });
+    check('2.9 km：不出任何距离提示',
+      near.notes.length === 0 && !near.text.includes('请核对是否同一处') &&
+      !near.text.includes('坐标偏差约'), near.text.slice(0, 200));
+
+    const both = await renderNote({ coordinateDriftKm: 6.7, matchDist: 6672, distanceKm: 6.7 });
+    check('两条都有值时只出一条（exact 优先）',
+      both.notes.length === 1 && both.notes[0].attrs['data-hmp-note'] === 'drift',
+      JSON.stringify(both.notes.map(n => n.attrs['data-hmp-note'])));
+  }
+
   // ============ 6. inspect() 诊断可用 ============
   console.log('\n=== 6. HMP.card.inspect() 诊断 ===');
   const info = CARD.inspect();

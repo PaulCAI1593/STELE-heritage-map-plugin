@@ -384,10 +384,18 @@
     }
 
     // #24：同名地点在 3–10 km 时的坐标偏差提示（12px，沿用证据小字样式）
+    // #26：任意匹配只要远于 3 km 都给距离提示；exact 用偏差文案，其余用核对文案。
+    //       两条互斥（exact 优先），不重复出现。
     if (state.coordinateDriftKm != null) {
-      children.push(el('div', { className: 'hmp-sub-note hmp-drift-note' },
-        '同名地点，坐标偏差约 ' + Number(state.coordinateDriftKm).toFixed(1) +
+      children.push(el('div', {
+        className: 'hmp-sub-note hmp-drift-note', 'data-hmp-note': 'drift',
+      }, '同名地点，坐标偏差约 ' + Number(state.coordinateDriftKm).toFixed(1) +
         ' 公里（位置以点位地址为准）'));
+    } else if (state.distanceKm != null) {
+      children.push(el('div', {
+        className: 'hmp-sub-note hmp-drift-note', 'data-hmp-note': 'distance',
+      }, '该地点距点位约 ' + Number(state.distanceKm).toFixed(1) +
+        ' 公里，请核对是否同一处'));
     }
 
     // 三路证据（小字）：名称/地址/坐标各有多少候选、最高相似度多少
@@ -766,6 +774,13 @@
   // 必然是另一个东西——实测「白宫」这个名字能命中 40 公里外的「白宫民宿(南汇大学城店)」，
   // 而高德的模糊匹配让它的名称相似度依然很高，不卡距离就会被当成"名称强命中"直接采用。
   const NAME_MAX_DIST = 3000;
+
+  // #26：距点位超过 3 km 的采用结果一律给距离提示（不论是否同名）。
+  // 与 final.coordinateDistanceKm 同口径：公里、1 位小数；≤3 km 返回 null。
+  function distanceKmOf(distM) {
+    if (!Number.isFinite(distM) || distM <= NAME_MAX_DIST) return null;
+    return Math.round(distM / 100) / 10;
+  }
 
   // ── 候选分类 ──
   // 关键：**以「类型」字段为准**，不要把名称混进来判断。
@@ -1619,6 +1634,7 @@
         // #24：3–10 km 的完全同名点采用，并记坐标偏差（1 位小数）。
         const driftKm = (unified.exact && Number.isFinite(sc.dist) && sc.dist > NAME_MAX_DIST)
           ? Math.round(sc.dist / 100) / 10 : null;
+        const distanceKm = distanceKmOf(sc.dist);
         const level = (driftKm
           ? '同名地点（坐标偏差约 ' + driftKm.toFixed(1) + ' 公里）· '
           : '') + '三路统一评分（来源 ' + srcLabel + '，score ' +
@@ -1645,7 +1661,7 @@
           matched: {
             poi: sc.poi, sim: sc.sim, simAdj: sc.simAdj, dist: sc.dist,
             distScore: sc.distScore, score: sc.score, source: unified.src,
-            exactName: !!unified.exact, coordinateDriftKm: driftKm,
+            exactName: !!unified.exact, coordinateDriftKm: driftKm, distanceKm,
           },
           info: api && typeof api.extract === 'function' ? api.extract(sc.poi) : undefined,
           provider,
@@ -1994,6 +2010,8 @@
         dist: Number.isFinite(result.dist) ? Math.round(result.dist) : null,
         coordinateDriftKm: (result.matched && result.matched.coordinateDriftKm != null)
           ? result.matched.coordinateDriftKm : null,
+        distanceKm: (result.matched && result.matched.distanceKm != null)
+          ? result.matched.distanceKm : distanceKmOf(result.dist),
         fallbackNote,
         verifiedBy: result.verifiedBy || null,
         supplementedBy: result.supplementedBy || null,
@@ -2087,6 +2105,8 @@
         source: m.source || result.matchType || 'name',
         exactName: !!(m && m.exactName),
         coordinateDriftKm: (m && m.coordinateDriftKm != null) ? m.coordinateDriftKm : null,
+        // #26：非 exact 的远距离采用也记实际距离（exact 时与 drift 同值）
+        coordinateDistanceKm: distanceKmOf(m && m.dist),
         why,
       } : null,
       // 兼容字段：旧版阅读习惯/旧测试断言仍能看到时间、点位、家、选用路
@@ -2115,6 +2135,8 @@
         matchType: cacheData.matchType || 'name',
         matchDist: cacheData.dist || null,
         coordinateDriftKm: cacheData.coordinateDriftKm == null ? null : cacheData.coordinateDriftKm,
+        // #26：旧缓存没有 distanceKm 字段，按 dist 现算，保证重开也有提示
+        distanceKm: cacheData.distanceKm != null ? cacheData.distanceKm : distanceKmOf(cacheData.dist),
         fallbackNote: cacheData.fallbackNote || '',
         verifiedBy: cacheData.verifiedBy || null,
         supplementedBy: cacheData.supplementedBy || null,
@@ -2440,6 +2462,7 @@
     searchNearby,
     heritageRank,
     plausiblePrice,
+    distanceKmOf,
     closureHint,
     pickProviders,
     borrowedNamePenalty,

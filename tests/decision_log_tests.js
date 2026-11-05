@@ -174,5 +174,35 @@ const log = global.window.HMP.decisionLog;
   check('v1+v2 混存：都能读且条数正确', mixed.length === 2 &&
     mixed[0].schema === 1 && mixed[1].schema === 2, mixed.map(x => x.schema).join());
 
+  // ── #26：远距离提示的日志字段 ──
+  await log.clear();
+  await log.append({
+    site: '远距离点位', provider: 'amap',
+    final: { pickedName: '远距离点位', sim: 0.9, dist: 3400, source: 'name', coordinateDistanceKm: 3.4 },
+  });
+  const farEntry = (await log.all())[0];
+  check('#26 final.coordinateDistanceKm 保留（3.4）',
+    farEntry.final.coordinateDistanceKm === 3.4, JSON.stringify(farEntry.final));
+  await log.append({
+    site: '同名远点', provider: 'amap',
+    final: {
+      pickedName: '同名远点', sim: 1, dist: 6672, source: 'name',
+      exactName: true, coordinateDriftKm: 6.7, coordinateDistanceKm: 6.7,
+    },
+  });
+  const exactEntry = (await log.all())[1];
+  check('#26 exact 时 coordinateDriftKm 与 coordinateDistanceKm 并存',
+    exactEntry.final.coordinateDriftKm === 6.7 && exactEntry.final.coordinateDistanceKm === 6.7,
+    JSON.stringify(exactEntry.final));
+  await log.append({ site: '旧记录', provider: 'amap', final: { pickedName: '旧记录', sim: 1, dist: 10, source: 'name' } });
+  const compatEntry = (await log.all())[2];
+  check('#26 旧记录没有该字段也照常读（不补空字段）',
+    compatEntry.final && !('coordinateDistanceKm' in compatEntry.final),
+    JSON.stringify(compatEntry.final));
+  await log.append({ site: '越界', provider: 'amap', final: { pickedName: '越界', sim: 1, dist: 10, source: 'name', coordinateDistanceKm: 5000 } });
+  const outEntry = (await log.all())[3];
+  check('#26 越界的 coordinateDistanceKm 不写（负例）',
+    outEntry.final && !('coordinateDistanceKm' in outEntry.final), JSON.stringify(outEntry.final));
+
   finish();
 })().catch(e => { console.error('测试异常:', e); process.exit(1); });

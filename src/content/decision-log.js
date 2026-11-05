@@ -185,6 +185,9 @@
         exactName: fin.exactName === true,
         ...(Number.isFinite(fin.coordinateDriftKm) && fin.coordinateDriftKm > 0 && fin.coordinateDriftKm <= 10
           ? { coordinateDriftKm: Math.round(fin.coordinateDriftKm * 10) / 10 } : {}),
+        // #26：远距离采用的通用距离（公里，1 位小数；旧日志无此字段照样可读）
+        ...(Number.isFinite(fin.coordinateDistanceKm) && fin.coordinateDistanceKm > 0 && fin.coordinateDistanceKm <= 1000
+          ? { coordinateDistanceKm: Math.round(fin.coordinateDistanceKm * 10) / 10 } : {}),
         why: normalizeWhy(fin.why),
       } : null,
     };
