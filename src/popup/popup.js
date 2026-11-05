@@ -12,6 +12,8 @@
   const THEME_KEY = 'hmpTheme';
   const DEFAULT_THEME = 'glass';
   const THEMES = ['paper', 'glass'];
+  // #17：Key 测试状态的独立存储键（不塞进 decisionLog / 配置对象）
+  const KEY_TEST_KEY = 'hmp:keyTest';
 
   const UPDATE_REPO = 'PaulCAI1593/STELE-heritage-map-plugin';
   const UPDATE_API = 'https://api.github.com/repos/' + UPDATE_REPO + '/releases/latest';
@@ -34,6 +36,9 @@
   let currentState = 'empty';
   let lastTest = null;          // null | 'ok' | 'fail'
   let lastTestInfo = null;      // {ok:[], fail:[{label,text}]}
+  // #17：{ amap: {ok, ts, tail} | null, baidu: ... }；tail 只存 Key 后 4 位
+  let keyTest = { amap: null, baidu: null };
+  let restoredFail = false;     // 重开时只有失败记录：状态带用「上次测试失败」措辞
   let busy = false;
 
   // ---------------- 主题 ----------------
@@ -169,6 +174,7 @@
     if (currentState === 'ready') {
       const n = (currentKey('amapKey') ? 1 : 0) + (currentKey('baiduAk') ? 1 : 0);
       title = '已填写 ' + n + ' 个 Key · 尚未测试';
+      if (restoredFail) title = '已填写 ' + n + ' 个 Key · 上次测试失败';
     }
     setBand(conf.band, title, desc);
     updateKeyStates();
@@ -185,13 +191,22 @@
   }
 
   function load() {
-    storageGet(['amapKey', 'baiduAk', 'defaultProvider', 'strategyMode', 'enabled'], items => {
+    storageGet(['amapKey', 'baiduAk', 'defaultProvider', 'strategyMode', 'enabled', KEY_TEST_KEY], items => {
       if ($('amapKey')) $('amapKey').value = items.amapKey || '';
       if ($('baiduAk')) $('baiduAk').value = items.baiduAk || '';
       if ($('defaultProvider')) $('defaultProvider').value = items.defaultProvider || 'amap';
       if ($('strategyMode')) $('strategyMode').value = items.strategyMode || 'combine';
       if ($('enabled')) $('enabled').checked = items.enabled !== false;
       savedSnapshot = readForm();
+      // #17：首帧先读回测试状态（用已保存配置比对尾号），再渲染状态带
+      const stored = (items && items[KEY_TEST_KEY]) || {};
+      keyTest = {
+        amap: stored.amap && typeof stored.amap === 'object' ? stored.amap : null,
+        baidu: stored.baidu && typeof stored.baidu === 'object' ? stored.baidu : null
+      };
+      pruneKeyTest(savedSnapshot);
+      restoreResStates();
+      applyRestoredTestState();
       renderState(computeState());
     });
     refreshCacheInfo();
@@ -223,6 +238,83 @@
 
   function tailOf(key) {
     return key && key.length > 4 ? key.slice(-4) : (key || '');
+  }
+
+  // ---------------- Key 测试状态（#17） ----------------
+  function pad2(n) { return String(n).length < 2 ? '0' + n : String(n); }
+
+  /** 当天只显示 HH:MM，跨天显示 MM-DD（本地时间） */
+  function formatTestTime(ts, now) {
+    const d = new Date(ts);
+    const n = now == null ? new Date() : new Date(now);
+    if (isNaN(d.getTime())) return '';
+    const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+    return sameDay ? pad2(d.getHours()) + ':' + pad2(d.getMinutes()) : pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  /** 记录是否仍对当前「已保存」的 Key 有效（尾号一致且非空） */
+  function keyTestRecord(provider) {
+    const rec = keyTest[provider];
+    if (!rec || typeof rec.ts !== 'number' || !rec.tail) return null;
+    const saved = savedSnapshot ? String(savedSnapshot[PROVIDERS[provider].input] || '') : '';
+    if (!saved || tailOf(saved) !== rec.tail) return null;
+    return rec;
+  }
+
+  function keyTestLabel(rec) {
+    return (rec.ok ? '已测试通过 · ' : '上次测试失败 · ') + formatTestTime(rec.ts);
+  }
+
+  /** 首帧把持久化结果写回两家结果行（先于状态带，避免闪一下「未测」） */
+  function restoreResStates() {
+    ['amap', 'baidu'].forEach(p => {
+      if (!$(PROVIDERS[p].res)) return;
+      const saved = savedSnapshot ? String(savedSnapshot[PROVIDERS[p].input] || '') : '';
+      if (!saved) return;                    // 未配置：保留「未测」
+      const rec = keyTestRecord(p);
+      if (rec) setRes(p, rec.ok ? 'ok' : 'fail', keyTestLabel(rec));
+      else setRes(p, 'idle', '已配置 · 未测试');
+    });
+  }
+
+  /** 重开后按记录回填状态带：有通过记录 → 等同于「上次测试通过」 */
+  function applyRestoredTestState() {
+    restoredFail = false;
+    const ok = [], fail = [];
+    ['amap', 'baidu'].forEach(p => {
+      const rec = keyTestRecord(p);
+      if (!rec) return;
+      (rec.ok ? ok : fail).push({ label: PROVIDERS[p].label, text: keyTestLabel(rec) });
+    });
+    if (ok.length && !isDirty()) {
+      lastTest = 'ok';
+      lastTestInfo = { ok, fail: [] };
+    } else if (fail.length && !isDirty()) {
+      lastTest = null;
+      lastTestInfo = null;
+      restoredFail = true;
+    }
+  }
+
+  /** 测试结果落盘：{ok, ts, tail}，tail 只取后 4 位；清缓存不会碰它 */
+  function persistKeyTest(provider, ok, key) {
+    if (!key) return;
+    keyTest[provider] = { ok: !!ok, ts: Date.now(), tail: tailOf(key) };
+    const out = {};
+    ['amap', 'baidu'].forEach(p => { if (keyTest[p]) out[p] = keyTest[p]; });
+    storageSet({ [KEY_TEST_KEY]: out });
+  }
+
+  /** Key 被改/清空（保存后尾号不一致）⇒ 记录失效；清缓存不清这里 */
+  function pruneKeyTest(form) {
+    let changed = false;
+    ['amap', 'baidu'].forEach(p => {
+      const rec = keyTest[p];
+      if (!rec) return;
+      const key = String(form[PROVIDERS[p].input] || '');
+      if (!key || tailOf(key) !== rec.tail) { delete keyTest[p]; changed = true; }
+    });
+    if (changed) storageSet({ [KEY_TEST_KEY]: Object.assign({}, keyTest) });
   }
 
   function updateKeyStates() {
@@ -259,9 +351,14 @@
     return new Promise(resolve => {
       storageSet(payload, () => {
         savedSnapshot = payload;
-        updateDirtyHint();
+        pruneKeyTest(payload);            // Key 改了/清空 ⇒ 旧测试记录失效
         if (!opts || !opts.silent) {
           lastTest = null; lastTestInfo = null;
+        }
+        restoreResStates();
+        applyRestoredTestState();
+        updateDirtyHint();
+        if (!opts || !opts.silent) {
           renderState(computeState());
           flashBand('b-ok', '已保存', '刷新遗产地图详情页即可生效。');
         }
@@ -481,6 +578,8 @@
       setRes(provider, 'prog', '已先保存当前填写的 Key，再开始测试…');
     }
     const one = await runTest(provider);
+    persistKeyTest(provider, one.ok, currentKey(PROVIDERS[provider].input));
+    restoredFail = false;
     lastTestInfo = { ok: one.ok ? [one] : [], fail: one.ok ? [] : [one] };
     // 另一家若已填且还没有结果，补一句省略提示，不让它显示成失败
     ['amap', 'baidu'].forEach(p => {
@@ -509,6 +608,7 @@
       const key = currentKey(PROVIDERS[p].input);
       if (!key) continue;
       const r = await runTest(p);
+      persistKeyTest(p, r.ok, key);
       (r.ok ? ok : fail).push(r);
     }
     lastTestInfo = { ok, fail };
@@ -718,7 +818,13 @@
     state: { get: () => currentState, render: renderState, compute: computeState },
     version: { get: getVersion, compare: compareVersions, parse: parseUpdate, asset: DOWNLOAD_ASSET, page: RELEASE_PAGE },
     update: { check: checkUpdate, set: setUpd, cacheKey: UPDATE_CACHE_KEY, repo: UPDATE_REPO, api: UPDATE_API, mirror: UPDATE_MIRROR, ttl: UPDATE_TTL_MS },
-    test: { one: testOne, all: testKeys, classify: classifyError, providers: PROVIDERS, reset: resetRes },
+    test: {
+      one: testOne, all: testKeys, classify: classifyError, providers: PROVIDERS, reset: resetRes,
+      keyTest: {
+        KEY: KEY_TEST_KEY, format: formatTestTime, all: () => keyTest, record: keyTestRecord,
+        restore: restoreResStates, prune: pruneKeyTest
+      }
+    },
     form: { read: readForm, isDirty, save },
     refreshCacheInfo
   };

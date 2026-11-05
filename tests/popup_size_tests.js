@@ -83,8 +83,8 @@ check('不读 cookie、不发网络请求（只看可执行代码）', !/cookie|
 
 // ---------------- 5. CSS 与 HTML 接线 ----------------
 console.log('\n=== CSS 单一出口 / 旧写法已删 / 加载顺序 ===');
-check('存在 `html,body{width:var(--hmp-popup-w,400px)` 且只一处',
-  (css.match(/html,body\{width:var\(--hmp-popup-w,400px\)/g) || []).length === 1);
+check('存在 `html,body{width:min(var(--hmp-popup-w,400px),100vw)}` 且只一处（窄屏不横滚）',
+  (css.match(/html,body\{width:min\(var\(--hmp-popup-w,400px\),100vw\)/g) || []).length === 1);
 check('不再有 width:380px', !css.includes('width:380px'));
 check('不再有 max-width:100vw', !css.includes('max-width:100vw'));
 check('不再有 min-height:100vh', !css.includes('min-height:100vh'));
