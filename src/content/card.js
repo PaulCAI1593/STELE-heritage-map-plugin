@@ -408,6 +408,8 @@
     }
 
     children.push(buildFallbackLinks(state.amapSearchUrl, state.baiduSearchUrl));
+    // #32a：收藏开关（仅命中态；没有 steleId 时返回 null，不显示）
+    children.push(buildFavoriteRow(state));
     children.push(buildFoot(state));
     return buildSection(state, children,
       { visual: 'found', word: '已匹配', role: 'region', ariaLabel: '开放信息' });
@@ -683,6 +685,15 @@
       ? naming.addressQuery(admin, feature.address)
       : '';
 
+    // #32a：收藏快照的保护级别。站点用 category 表达保护身份
+    // （如「全国重点文物保护单位」「世界遗产」），不是 feature_type。
+    const categories = Array.isArray(feature.category) ? feature.category : [];
+    let tier = null;
+    for (const c of categories) {
+      const n = (c && (c.name || c.value)) || (typeof c === 'string' ? c : '');
+      if (n) { tier = String(n); break; }
+    }
+
     return {
       name: feature.name,
       lon, lat, admin, adminLast, city,
@@ -690,7 +701,8 @@
       addrQuery,
       nameVariants, searchTerms, modernNames,
       wgs, gcj, bd09,
-      featureType: feature.feature_type
+      featureType: feature.feature_type,
+      tier
     };
   }
 
@@ -780,6 +792,106 @@
   function distanceKmOf(distM) {
     if (!Number.isFinite(distM) || distM <= NAME_MAX_DIST) return null;
     return Math.round(distM / 100) / 10;
+  }
+
+  // ========== #32a · 收藏夹（卡片侧） ==========
+
+  // 当前点位 id：优先问 content.js 的公开出口（与卡片内容严格对应），
+  // 旧环境/单测没有 content.js 时退回 URL 解析。id 来自 URL，feature 响应体没有 id。
+  function currentSteleId() {
+    const c = window.HMP && window.HMP.content;
+    if (c && typeof c.currentSteleId === 'function') {
+      try {
+        const id = c.currentSteleId();
+        if (id) return String(id);
+      } catch (e) { /* 退回 URL */ }
+    }
+    const m = /\/(?:zhcn|enus)\/(?:geo|info|detail)\/([^/?#]+)/.exec(
+      (window.location && window.location.pathname) || ''
+    );
+    return m ? m[1] : null;
+  }
+
+  /** 收藏快照：只收拆分 §3 白名单字段，绝不带 Key/AK。 */
+  function favoriteSnapshot(state) {
+    const info = state.info || {};
+    return {
+      steleId: state.steleId,
+      name: state.siteName || info.name || '',
+      tier: state.tier == null ? null : state.tier,
+      address: state.siteAddress || '',
+      admin: Array.isArray(state.admin) ? state.admin : [],
+      match: {
+        matchedName: info.name || null,
+        matchDist: Number.isFinite(state.matchDist) ? state.matchDist : null,
+        matchType: state.matchType || null,
+        provider: state.provider || null,
+      },
+      info: {
+        opentime: info.opentimeWeek || info.opentimeToday || null,
+        cost: info.cost == null || info.cost === '' ? null : String(info.cost),
+        address: info.address || null,
+      },
+    };
+  }
+
+  function favoriteErrorText(res) {
+    if (!res) return '收藏失败，请重试';
+    if (res.reason === 'limit') return '收藏夹已满（上限 500 条），请先在弹窗中整理';
+    if (res.reason === 'size') return '收藏数据过大（超过 1MB），请先导出后清理';
+    if (res.reason === 'schema') return '收藏数据版本不兼容，已停止写入以保护原数据';
+    if (res.reason === 'storage') return '本地存储写入失败，请检查浏览器存储权限';
+    return '收藏失败，请重试';
+  }
+
+  /** 命中态操作区：「收藏 / 已收藏 ✓」开关（不是链接，点击不跳页、不重查）。 */
+  function buildFavoriteRow(state) {
+    const store = window.HMP && window.HMP.favoritesStore;
+    if (!store || !state.steleId) return null;
+    const row = el('div', { className: 'hmp-fav-row' });
+    const note = el('span', { className: 'hmp-fav-note', role: 'status', 'aria-live': 'polite' });
+    let saved = state.favorited === true;
+    const label = () => (saved ? '已收藏 ✓' : '收藏');
+    const btn = el('button', {
+      type: 'button', className: 'hmp-btn hmp-fav-btn',
+      'aria-pressed': saved ? 'true' : 'false',
+      'aria-label': saved ? '取消收藏' : '收藏该点位',
+    }, label());
+    const setSaved = v => {
+      saved = v;
+      btn.textContent = label();
+      btn.setAttribute('aria-pressed', saved ? 'true' : 'false');
+      btn.setAttribute('aria-label', saved ? '取消收藏' : '收藏该点位');
+    };
+    const say = text => { note.textContent = text || ''; };
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      say('');
+      try {
+        if (saved) {
+          const res = await store.remove(state.steleId);
+          if (res && res.ok) setSaved(false);
+          else say(favoriteErrorText(res));
+        } else {
+          const res = await store.add(favoriteSnapshot(state));
+          if (res && res.ok) setSaved(true);
+          else if (res && res.reason === 'duplicate') {
+            setSaved(true);
+            say('已在收藏夹（' + (res.groupName || '未分组') + '）');
+          } else {
+            say(favoriteErrorText(res));
+          }
+        }
+      } catch (e) {
+        say('收藏失败，请重试');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    row.appendChild(btn);
+    row.appendChild(note);
+    return row;
   }
 
   // ── 候选分类 ──
@@ -2002,7 +2114,7 @@
     if (myKey !== activeKey) return;      // 已切走，丢弃
     if (cached) {
       console.log('[HMP] cache hit:', poi.name);
-      renderResult(poi, cached.data);
+      await renderResult(poi, cached.data);
       return;
     }
 
@@ -2053,7 +2165,7 @@
       await window.HMP.cache.set(
         cacheProvider, poi.name, poi.adminLast || '', payload
       );
-      renderResult(poi, payload);
+      await renderResult(poi, payload);
     } else {
       const missProvider = diag.usedProvider || cfg.defaultProvider;
       // 失败也分三种：超时 / 有候选但未通过校验 / 三路都没候选（见 missingNote）
@@ -2067,7 +2179,7 @@
       await window.HMP.cache.setNegative(
         missProvider, poi.name, poi.adminLast || '', missPayload
       );
-      renderResult(poi, missPayload);
+      await renderResult(poi, missPayload);
     }
   }
 
@@ -2154,12 +2266,16 @@
     })).catch(() => { /* 日志失败不影响主流程 */ });
   }
 
-  function renderResult(poi, cacheData) {
+  async function renderResult(poi, cacheData) {
     // 降级跳转链接：高德走官方 URI API 的 keyword，
     // 百度走 place/search 的 query + region（城市单独传，不堆进关键词）。
     const amapPhrase = poi.city ? `${poi.city} ${poi.name}` : poi.name;
     const amapSearchUrl = window.HMP.apis.amap.searchUrl(amapPhrase);
     const baiduSearchUrl = window.HMP.apis.baidu.searchUrl(poi.name, poi.city, poi.bd09);
+    // #32a：收藏态必须在首帧就确定，避免先闪「收藏」再变「已收藏」。
+    const steleId = currentSteleId();
+    const store = window.HMP && window.HMP.favoritesStore;
+    const favorited = (steleId && store) ? await store.isSaved(steleId) : false;
 
     if (cacheData.matched) {
       const provider = cacheData.provider;
@@ -2171,6 +2287,11 @@
         providerLabel: provider === 'amap' ? '高德地图' : '百度地图',
         matchType: cacheData.matchType || 'name',
         matchDist: cacheData.dist || null,
+        steleId,
+        favorited,
+        tier: poi.tier || null,
+        siteAddress: poi.address || '',
+        admin: poi.admin || [],
         coordinateDriftKm: cacheData.coordinateDriftKm == null ? null : cacheData.coordinateDriftKm,
         // #26：旧缓存没有 distanceKm 字段，按 dist 现算，保证重开也有提示
         distanceKm: cacheData.distanceKm != null ? cacheData.distanceKm : distanceKmOf(cacheData.dist),
@@ -2516,6 +2637,10 @@
     panelGone,
     removeCard,
     cancelRender,
+    // #32a：收藏夹（卡片侧）
+    currentSteleId,
+    favoriteSnapshot,
+    buildFavoriteRow,
     NEARBY_RADIUS,
     NAME_STRONG_SIM
   };

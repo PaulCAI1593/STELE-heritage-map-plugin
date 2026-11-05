@@ -201,6 +201,23 @@
 
 #hmp-opening-card .hmp-btn:hover { background: #35507a; }
 
+/* ===== #32a 收藏开关（命中态操作区） ===== */
+#hmp-opening-card .hmp-fav-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 8px;
+}
+
+#hmp-opening-card .hmp-fav-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #a3261b;
+}
+
+#hmp-opening-card .hmp-fav-note:empty { display: none; }
+
 /* ===== 文物组（概念态，当前版本不显示） ===== */
 #hmp-opening-card .hmp-badge {
   font-size: 11px;

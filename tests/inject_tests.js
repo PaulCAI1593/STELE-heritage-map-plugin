@@ -28,6 +28,7 @@ class El {
     this._text = '';
     this._html = '';
     this.nodeType = 1;
+    this._listeners = {};
   }
   appendChild(c) {
     if (c.parentNode) c.parentNode.removeChild(c);
@@ -65,7 +66,8 @@ class El {
   set textContent(v) { this._text = String(v); }
   get innerHTML() { return this._html; }
   set innerHTML(v) { this._html = String(v); }
-  addEventListener() {}
+  addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); }
+  fire(type) { for (const fn of (this._listeners[type] || [])) fn({ type, target: this }); }
   matches(sel) { return matchSelector(this, sel); }
   querySelector(sel) { const r = this.querySelectorAll(sel); return r.length ? r[0] : null; }
   querySelectorAll(sel) {
@@ -177,6 +179,8 @@ const SRC = path.join(__dirname, '..', 'src', 'content');
 eval(fs.readFileSync(path.join(SRC, 'apis', 'amap.js'), 'utf8'));
 eval(fs.readFileSync(path.join(SRC, 'apis', 'baidu.js'), 'utf8'));
 eval(fs.readFileSync(path.join(SRC, 'matcher.js'), 'utf8'));
+// #32a：卡片收藏按钮依赖收藏数据层
+eval(fs.readFileSync(path.join(SRC, '..', 'shared', 'favorites-store.js'), 'utf8'));
 eval(fs.readFileSync(path.join(SRC, 'card.js'), 'utf8'));
 
 const CARD = window.HMP.card;
@@ -782,6 +786,85 @@ function resetDoc() {
     check('两条都有值时只出一条（exact 优先）',
       both.notes.length === 1 && both.notes[0].attrs['data-hmp-note'] === 'drift',
       JSON.stringify(both.notes.map(n => n.attrs['data-hmp-note'])));
+  }
+
+
+  // ============ 6i. #32a 卡片收藏开关 ============
+  console.log('\n=== 6i. 卡片收藏开关（#32a）===');
+  {
+    const FKEY = 'hmp:favorites:v1';
+    const FSTORE = window.HMP.favoritesStore;
+    const resetFav = () => { delete chrome.storage.local._store[FKEY]; };
+    const foundState = (extra) => Object.assign({
+      card: 'single', kind: 'found',
+      provider: 'amap', providerLabel: '高德地图',
+      matchType: 'name', matchDist: 120,
+      siteName: '测试点位', siteAddress: '某路1号', admin: ['北京市 东城区'],
+      tier: '全国重点文物保护单位',
+      info: { name: '高德点', opentimeWeek: '08:00-17:30', cost: '免费', address: '某路1号' },
+    }, extra || {});
+    const favBtn = () => {
+      const card = document.getElementById(CARD_ID);
+      return card ? card.querySelector('.hmp-fav-btn') : null;
+    };
+    const favNote = () => {
+      const card = document.getElementById(CARD_ID);
+      const n = card ? card.querySelector('.hmp-fav-note') : null;
+      return n ? collectText(n) : '';
+    };
+
+    resetFav();
+    CARD.renderState(foundState({ steleId: 'id-a', favorited: false }));
+    check('有 steleId 时显示收藏按钮，初始文案「收藏」', !!favBtn() && collectText(favBtn()) === '收藏',
+      favBtn() ? collectText(favBtn()) : 'null');
+    check('按钮带 aria-pressed=false', favBtn() && favBtn().attrs['aria-pressed'] === 'false');
+    favBtn().fire('click');
+    await sleep(20);
+    const lib1 = (chrome.storage.local._store[FKEY] || {});
+    check('点击后写入 hmp:favorites:v1（1 条）', (lib1.items || []).length === 1, JSON.stringify(lib1).slice(0, 200));
+    check('快照字段齐全（steleId/name/tier/address/admin/match/info）',
+      lib1.items && lib1.items[0] && lib1.items[0].steleId === 'id-a' &&
+      lib1.items[0].name === '测试点位' && lib1.items[0].tier === '全国重点文物保护单位' &&
+      lib1.items[0].address === '某路1号' && Array.isArray(lib1.items[0].admin) &&
+      lib1.items[0].match && lib1.items[0].match.provider === 'amap' &&
+      lib1.items[0].info && lib1.items[0].info.opentime === '08:00-17:30',
+      JSON.stringify(lib1.items && lib1.items[0]).slice(0, 300));
+    check('快照不含 Key/AK 字段', !JSON.stringify(lib1).includes('amapKey') && !JSON.stringify(lib1).includes('baiduAk'));
+    check('收藏后按钮态变「已收藏」（aria-label=取消收藏）', favBtn() && favBtn().attrs['aria-label'] === '取消收藏', favBtn() && favBtn().attrs['aria-label']);
+    favBtn().fire('click');
+    await sleep(20);
+    check('再次点击取消收藏（0 条、aria-label 回收藏该点位）',
+      ((chrome.storage.local._store[FKEY] || {}).items || []).length === 0 &&
+      favBtn().attrs['aria-label'] === '收藏该点位', favBtn() && favBtn().attrs['aria-label']);
+
+    // 重复收藏：库里已有同 id，但渲染态是未收藏
+    resetFav();
+    await FSTORE.add({ steleId: 'id-b', name: '已存在', match: { provider: 'baidu' } });
+    CARD.renderState(foundState({ steleId: 'id-b', favorited: false, siteName: '已存在' }));
+    favBtn().fire('click');
+    await sleep(20);
+    check('重复收藏：提示「已在收藏夹」且按钮转「已收藏」',
+      favNote().includes('已在收藏夹') && favBtn().attrs['aria-label'] === '取消收藏',
+      favNote() + ' / ' + favBtn().attrs['aria-label']);
+    check('重复收藏不改原条目', (chrome.storage.local._store[FKEY].items || []).length === 1);
+
+    // 上限：预置 500 条
+    resetFav();
+    const many = [];
+    for (let i = 0; i < 500; i++) many.push({ steleId: 'x' + i, name: '点' + i, savedAt: 1000 + i });
+    chrome.storage.local.set({ [FKEY]: { schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }], items: many } });
+    CARD.renderState(foundState({ steleId: 'id-c', favorited: false }));
+    favBtn().fire('click');
+    await sleep(20);
+    check('满 500 条：提示上限、按钮仍「收藏」、库仍 500 条',
+      favNote().includes('收藏夹已满') && favBtn().attrs['aria-label'] === '收藏该点位' &&
+      (chrome.storage.local._store[FKEY].items || []).length === 500,
+      favNote() + ' / ' + favBtn().attrs['aria-label']);
+
+    // 无 steleId → 不显示按钮
+    resetFav();
+    CARD.renderState(foundState({ favorited: false }));
+    check('无 steleId 时不显示收藏按钮', favBtn() === null);
   }
 
   // ============ 6. inspect() 诊断可用 ============

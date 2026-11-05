@@ -33,6 +33,7 @@
     {
       "matches": ["*://stele.geogv.org/zhcn/*"],
       "js": [
+        "shared/favorites-store.js",
         "content/decoder.js",
         "content/naming.js",
         "content/geo.js",

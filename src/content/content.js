@@ -33,9 +33,16 @@
     }
   }
 
-  function dispatchFeature(feature, source) {
+  // #32a · 收藏夹需要「当前点位 id」。
+  // 出口刻意**不写进 feature**：feature 会被 hmp:cache:* 与决策日志序列化，
+  // 附加内部字段会污染缓存 JSON；这里把 id 单独记下来，由 HMP.content.currentSteleId() 读取。
+  let publishedSteleId = null;
+
+  function dispatchFeature(feature, source, steleId) {
     if (!feature || !feature.name) return;
+    if (steleId) publishedSteleId = steleId;
     toast('获取点位成功（来源：' + source + '）：' + feature.name);
+    // detail 仍是原始 feature，事件形状不变（card.js 现有监听无需改）
     window.dispatchEvent(new CustomEvent('hmp:poi-loaded', { detail: feature }));
   }
 
@@ -47,7 +54,7 @@
   function announce(id, feature, source) {
     lastDispatchedId = id;
     lastHandledId = id;
-    dispatchFeature(feature, source);
+    dispatchFeature(feature, source, id);
   }
 
   // ========== 原始 fetch（后续自用，避免被自己的钩子二次拦截）==========
@@ -170,6 +177,15 @@
   // 供 card.js 按 id 拉取点位：文物组的子项目（members）只带 kid/name/geom，
   // 但 kid 就是子项目自己的 feature id，拉一次能拿到它自己的地址与简介。
   window.HMP.featureApi = { fetchById: fetchFeatureById };
+
+  // #32a：当前被派发的点位 id（收藏夹写 steleId 用）。
+  // 优先用最近一次派发的 id（与卡片内容严格对应）；没有时退回 URL。
+  // HMP.debug.status() 的形状保持不变，id 只在这里单独暴露。
+  window.HMP.content = Object.assign(window.HMP.content || {}, {
+    currentSteleId() {
+      return publishedSteleId || currentGeoId();
+    },
+  });
 
   // ========== 调试入口 ==========
   // 注意：card.js 也往 HMP.debug 上挂了 inspect，这里必须"合并"而不是覆盖
