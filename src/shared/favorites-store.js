@@ -24,6 +24,16 @@
   const DEFAULT_GROUP_ID = 'g-default';
   const LIMITS = { items: 500, groups: 30, groupName: 24, bytes: 1024 * 1024 };
 
+  // #36 P2-2(a)：写串行队列。所有变更都是「整键回读-改-写」，
+  // 同一上下文里并发写（撤销连点、卡片快速点收藏 + 弹窗同时改）会 last-writer-wins 丢写。
+  // 这里把变更按调用顺序排成一条 promise 链；前一个写失败不阻断后一个。
+  let writeChain = Promise.resolve();
+  function enqueueWrite(run) {
+    const queued = writeChain.then(run);
+    writeChain = queued.then(() => undefined, () => undefined);
+    return queued;
+  }
+
   function hasStorage() {
     return !!(window.chrome && window.chrome.storage && window.chrome.storage.local);
   }
@@ -165,7 +175,7 @@
     return lib || defaultLibrary();
   }
 
-  async function add(item, opts) {
+  async function addNow(item, opts) {
     const cleaned = cleanItem(item);
     if (!cleaned) return { ok: false, reason: 'invalid' };
     const loaded = await loadForWrite();
@@ -185,7 +195,7 @@
     return { ok: true, item: cleaned };
   }
 
-  async function remove(steleId, groupId) {
+  async function removeNow(steleId, groupId) {
     const loaded = await loadForWrite();
     if (!loaded.ok) return loaded;
     const lib = loaded.library;
@@ -197,7 +207,7 @@
     return { ok: true, removed: true, item };
   }
 
-  async function move(steleId, groupId) {
+  async function moveNow(steleId, groupId) {
     const loaded = await loadForWrite();
     if (!loaded.ok) return loaded;
     const lib = loaded.library;
@@ -229,13 +239,13 @@
     return n;
   }
 
-  async function createGroup(name) {
+  async function createGroupNow(name) {
     const n = validGroupName(name);
     if (!n) return { ok: false, reason: 'invalid-name' };
     const loaded = await loadForWrite();
     if (!loaded.ok) return loaded;
     const lib = loaded.library;
-    if (lib.groups.length >= LIMITS.groups) return { ok: false, reason: 'limit' };
+    if (lib.groups.length >= LIMITS.groups) return { ok: false, reason: 'limit-groups' };
     if (lib.groups.some(g => g.name === n)) return { ok: false, reason: 'duplicate-name' };
     const id = 'g-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const group = { id, name: n, system: false, createdAt: Date.now() };
@@ -245,7 +255,7 @@
     return { ok: true, group };
   }
 
-  async function renameGroup(id, name) {
+  async function renameGroupNow(id, name) {
     const n = validGroupName(name);
     if (!n) return { ok: false, reason: 'invalid-name' };
     const loaded = await loadForWrite();
@@ -261,7 +271,7 @@
     return { ok: true, group: g };
   }
 
-  async function deleteGroup(id) {
+  async function deleteGroupNow(id) {
     const loaded = await loadForWrite();
     if (!loaded.ok) return loaded;
     const lib = loaded.library;
@@ -277,6 +287,15 @@
     if (!w.ok) return w;
     return { ok: true, moved };
   }
+
+  // #36 P2-2(a)：对外变更接口一律排队。弹出页与内容脚本各自持一份 store，
+  // 同一份里的并发写不再互相覆盖；回调/返回值与排队前一致（成功/失败 reason 原样返回）。
+  function add(item, opts) { return enqueueWrite(() => addNow(item, opts)); }
+  function remove(steleId, groupId) { return enqueueWrite(() => removeNow(steleId, groupId)); }
+  function move(steleId, groupId) { return enqueueWrite(() => moveNow(steleId, groupId)); }
+  function createGroup(name) { return enqueueWrite(() => createGroupNow(name)); }
+  function renameGroup(id, name) { return enqueueWrite(() => renameGroupNow(id, name)); }
+  function deleteGroup(id) { return enqueueWrite(() => deleteGroupNow(id)); }
 
   async function search(query, scope, groupId) {
     const q = String(query == null ? '' : query).trim().toLowerCase();

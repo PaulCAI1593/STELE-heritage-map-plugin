@@ -151,26 +151,49 @@ global.MutationObserver = class {
 };
 function fireMutations() { for (const o of observers) o.cb([]); }
 global.chrome = {
-  storage: { local: {
-    _store: {},
-    // 注意：k == null 表示"取全量"（cache.js 的 getAll 就是这么调的），
-    // 早期 mock 在这里返回 {} 会让 clear()/purgeOldVersions() 静默失效。
-    get(k, cb) {
-      const store = this._store || {};
-      const o = (k == null) ? Object.assign({}, store) : (() => {
-        const r = {};
-        for (const x of (Array.isArray(k) ? k : [k])) if (x in store) r[x] = store[x];
-        return r;
-      })();
-      if (cb) cb(o); return Promise.resolve(o);
+  storage: {
+    // #36 P2-2(b)：卡片订阅 chrome.storage.onChanged；这里进桩并派发变更，
+    // 让「外部（弹窗）写收藏库 → 卡片按钮态跟随」可测。
+    onChanged: {
+      _ls: [],
+      addListener(fn) { this._ls.push(fn); },
+      removeListener(fn) { const i = this._ls.indexOf(fn); if (i >= 0) this._ls.splice(i, 1); },
+      emit(changes) { for (const fn of this._ls.slice()) fn(changes, 'local'); },
     },
-    set(i, cb) { Object.assign(this._store, i); if (cb) cb(); return Promise.resolve(); },
-    remove(k, cb) {
-      const store = this._store || {};
-      for (const x of (Array.isArray(k) ? k : [k])) delete store[x];
-      if (cb) cb(); return Promise.resolve();
+    local: {
+      _store: {},
+      // 注意：k == null 表示"取全量"（cache.js 的 getAll 就是这么调的），
+      // 早期 mock 在这里返回 {} 会让 clear()/purgeOldVersions() 静默失效。
+      get(k, cb) {
+        const store = this._store || {};
+        const o = (k == null) ? Object.assign({}, store) : (() => {
+          const r = {};
+          for (const x of (Array.isArray(k) ? k : [k])) if (x in store) r[x] = store[x];
+          return r;
+        })();
+        if (cb) cb(o); return Promise.resolve(o);
+      },
+      set(i, cb) {
+        const store = this._store || {};
+        const changes = {};
+        for (const k of Object.keys(i)) changes[k] = { oldValue: store[k], newValue: i[k] };
+        Object.assign(store, i);
+        if (cb) cb();
+        chrome.storage.onChanged.emit(changes);
+        return Promise.resolve();
+      },
+      remove(k, cb) {
+        const store = this._store || {};
+        const changes = {};
+        for (const x of (Array.isArray(k) ? k : [k])) {
+          if (x in store) { changes[x] = { oldValue: store[x] }; delete store[x]; }
+        }
+        if (cb) cb();
+        if (Object.keys(changes).length) chrome.storage.onChanged.emit(changes);
+        return Promise.resolve();
+      },
     },
-  } },
+  },
 };
 
 const SRC = path.join(__dirname, '..', 'src', 'content');
@@ -860,6 +883,24 @@ function resetDoc() {
       favNote().includes('收藏夹已满') && favBtn().attrs['aria-label'] === '收藏该点位' &&
       (chrome.storage.local._store[FKEY].items || []).length === 500,
       favNote() + ' / ' + favBtn().attrs['aria-label']);
+
+    // 无 steleId → 不显示按钮
+    // #36 P2-2(b)：外部（弹窗/其它标签页）改收藏库 → 已渲染卡片按钮态跟随
+    resetFav();
+    chrome.storage.local.set({ [FKEY]: { schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }], items: [] } });
+    CARD.renderState(foundState({ steleId: 'id-ext', favorited: false }));
+    check('外部写库前：按钮为「收藏」', favBtn() && favBtn().attrs['aria-label'] === '收藏该点位');
+    chrome.storage.local.set({
+      [FKEY]: {
+        schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }],
+        items: [{ steleId: 'id-ext', name: '弹窗收藏', groupId: 'g-default', savedAt: 1 }],
+      },
+    });
+    check('外部收藏后：按钮变「已收藏」（onChanged 刷新）',
+      favBtn() && favBtn().attrs['aria-label'] === '取消收藏', favBtn() && favBtn().attrs['aria-label']);
+    chrome.storage.local.set({ [FKEY]: { schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }], items: [] } });
+    check('外部取消收藏后：按钮回「收藏」',
+      favBtn() && favBtn().attrs['aria-label'] === '收藏该点位', favBtn() && favBtn().attrs['aria-label']);
 
     // 无 steleId → 不显示按钮
     resetFav();

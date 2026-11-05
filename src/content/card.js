@@ -796,6 +796,10 @@
 
   // ========== #32a · 收藏夹（卡片侧） ==========
 
+  // #36 P2-2(b)：已渲染卡片上的收藏按钮引用。弹窗/其它标签页改了收藏库时，
+  // 用 chrome.storage.onChanged 把按钮态同步过来（以前要重新出卡才更新）。
+  const favRowRefs = [];
+
   // 当前点位 id：优先问 content.js 的公开出口（与卡片内容严格对应），
   // 旧环境/单测没有 content.js 时退回 URL 解析。id 来自 URL，feature 响应体没有 id。
   function currentSteleId() {
@@ -891,7 +895,40 @@
     });
     row.appendChild(btn);
     row.appendChild(note);
+    favRowRefs.push({ el: row, steleId: state.steleId, setSaved });
     return row;
+  }
+
+  /** 收藏库快照 → 已收藏 id 集合（容忍 null / 旧版无 items）。 */
+  function favoriteIdSet(newValue) {
+    const ids = new Set();
+    const items = newValue && Array.isArray(newValue.items) ? newValue.items : [];
+    items.forEach(it => { if (it && it.steleId != null) ids.add(String(it.steleId)); });
+    return ids;
+  }
+
+  /** 把最新收藏库刷到已渲染卡片的按钮上（只改按钮态，不动卡片其它内容）。 */
+  function refreshFavoriteRows(newValue) {
+    const ids = favoriteIdSet(newValue);
+    for (let i = favRowRefs.length - 1; i >= 0; i--) {
+      const ref = favRowRefs[i];
+      if (!ref || !ref.el || ref.el.isConnected === false) { favRowRefs.splice(i, 1); continue; }
+      ref.setSaved(ids.has(String(ref.steleId)));
+    }
+  }
+
+  /** #36 P2-2(b)：订阅收藏键变化；没有 chrome.storage.onChanged（测试桩）时静默跳过。 */
+  function bindFavoritesChange() {
+    const c = window.chrome;
+    const oc = c && c.storage && c.storage.onChanged;
+    if (!oc || typeof oc.addListener !== 'function') return;
+    const store = window.HMP && window.HMP.favoritesStore;
+    const key = (store && store.KEY) || 'hmp:favorites:v1';
+    oc.addListener((changes, area) => {
+      if (area && area !== 'local') return;
+      if (!changes || !changes[key]) return;
+      refreshFavoriteRows(changes[key].newValue);
+    });
   }
 
   // ── 候选分类 ──
@@ -2603,6 +2640,9 @@
     };
   }
 
+  // #36 P2-2(b)：模块加载即订阅收藏键，弹窗/其它标签页改库时同步卡片按钮态。
+  bindFavoritesChange();
+
   window.HMP.card = {
     CARD_ID,
     processFeature,
@@ -2641,6 +2681,7 @@
     currentSteleId,
     favoriteSnapshot,
     buildFavoriteRow,
+    refreshFavoriteRows,
     NEARBY_RADIUS,
     NAME_STRONG_SIM
   };

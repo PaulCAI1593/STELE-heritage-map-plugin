@@ -68,8 +68,8 @@ check('popup.js：深链单一出口与高德/百度/复制名称',
   /zhcn\/search\?keyword=/.test(js) &&
   /amapUrlOf/.test(js) && /baiduUrlOf/.test(js) && /copyFavoriteName/.test(js));
 
-check('popup.js：删组二次确认、删除先落盘再移 UI',
-  /window\.confirm\('删除这个分组？/.test(js) &&
+check('popup.js：删组二次确认（带组名/条数）、删除先落盘再移 UI',
+  /window\.confirm\(deleteGroupConfirmText\(/.test(js) &&
   js.indexOf('await store.remove(item.steleId') >= 0 &&
   js.indexOf('pushFavUndo(r.item || item, item.groupId)') >= 0);
 
@@ -105,10 +105,11 @@ function grab(name) {
 }
 const pure = new Function(
   'const FAV_GROUP_DEFAULT = "g-default";\n' +
-  ['pad2', 'formatSavedAt', 'buildDeepLink', 'buildSearchLink', 'filterFavorites', 'groupCounts', 'undoAlive', 'undoText', 'favErrorText']
+  ['pad2', 'formatSavedAt', 'buildDeepLink', 'buildSearchLink', 'filterFavorites', 'groupCounts', 'undoAlive', 'undoText', 'favErrorText', 'deleteGroupConfirmText']
     .map(grab).join('\n') +
-  '\nreturn {pad2, formatSavedAt, buildDeepLink, buildSearchLink, filterFavorites, groupCounts, undoAlive, undoText, favErrorText};'
+  '\nreturn {pad2, formatSavedAt, buildDeepLink, buildSearchLink, filterFavorites, groupCounts, undoAlive, undoText, favErrorText, deleteGroupConfirmText};'
 )();
+
 
 const items = [
   { steleId: 'a', name: '龙华寺', address: '龙华路2853号', groupId: 'g-default', savedAt: 1000 },
@@ -142,15 +143,38 @@ check('undoAlive：边界 now < expiresAt 才有效',
   pure.undoAlive({ expiresAt: 100 }, 100) === false &&
   pure.undoAlive(null, 0) === false);
 
-check('undoText/formatSavedAt：计数文案与 MM-DD 收藏时间',
-  pure.undoText({ items: [1, 2] }) === '已取消收藏 2 条' &&
+check('undoText/formatSavedAt：单条给名称、多条给条数、MM-DD 收藏时间',
+  pure.undoText({ items: [{ item: { name: '龙华寺' }, groupId: 'g-default' }] }) === '已取消收藏「龙华寺」' &&
+  pure.undoText({ items: [{ item: { name: '甲' } }, { item: { name: '乙' } }] }) === '已取消收藏 2 条' &&
+  pure.undoText({ items: [{}] }) === '已取消收藏 1 条' &&
   pure.formatSavedAt(new Date(2026, 0, 9).getTime()) === '01-09 收藏');
 
-check('favErrorText：上限/重复组名/存储失败都有人话',
+check('favErrorText：上限/分组上限/重名/非法名/系统组/存储失败都有人话',
   pure.favErrorText('limit').indexOf('500') >= 0 &&
+  pure.favErrorText('limit-groups') === '分组已达上限（30 个）。' &&
   pure.favErrorText('duplicate', { groupName: '2026 上海行' }).indexOf('2026 上海行') >= 0 &&
+  pure.favErrorText('duplicate-name') === '已有同名分组，换个名字。' &&
+  pure.favErrorText('invalid-name').indexOf('24 字') >= 0 &&
+  pure.favErrorText('system').indexOf('系统分组') >= 0 &&
   pure.favErrorText('size').indexOf('1MB') >= 0 &&
   pure.favErrorText('storage').length > 0);
+
+check('deleteGroupConfirmText：带组名与条数，n=0 省略条目句（P3-4）',
+  pure.deleteGroupConfirmText('2026 上海行', 3) ===
+    '删除分组「2026 上海行」？组内 3 条收藏会移到「未分组」，不会丢失。' &&
+  pure.deleteGroupConfirmText('空组', 0) ===
+    '删除分组「空组」？组内没有收藏，删除不影响收藏内容。');
+
+check('popup.js：删组确认用插值函数（不走固定占位文案）',
+  /window\.confirm\(deleteGroupConfirmText\(/.test(js) &&
+  js.indexOf("'删除这个分组？") < 0);
+
+check('popup.js：订阅 chrome.storage.onChanged 刷新收藏页（P2-2）',
+  /bindFavoritesStorageSync/.test(js) &&
+  /storage\.onChanged/.test(js) &&
+  /bindFavorites\(\);\s*\n\s*bindFavoritesStorageSync\(\);/.test(js) &&
+  /reason === 'limit-groups'/.test(js));
+
 
 // ---------- 数据层配合：撤销恢复原 savedAt、删组不丢 ----------
 env.setup({});

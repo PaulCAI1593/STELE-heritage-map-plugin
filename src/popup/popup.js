@@ -864,18 +864,39 @@
   }
 
   function undoText(undo) {
-    return '已取消收藏 ' + (undo ? undo.items.length : 0) + ' 条';
+    const items = (undo && Array.isArray(undo.items)) ? undo.items : [];
+    if (items.length === 1) {
+      const rec = items[0] || {};
+      const name = (rec.item && rec.item.name) || rec.name || '';
+      // P3-5：单条给名称，多条给条数（任务书 PRD §3.4）
+      return name ? '已取消收藏「' + name + '」' : '已取消收藏 1 条';
+    }
+    return '已取消收藏 ' + items.length + ' 条';
   }
 
   function favErrorText(reason, info) {
     if (reason === 'limit') return '收藏夹已满（上限 500 条），请先删除一些条目。';
+    if (reason === 'limit-groups') return '分组已达上限（30 个）。';
     if (reason === 'size') return '收藏数据过大（超过 1MB），请先删除一些条目。';
     if (reason === 'schema') return '收藏数据版本不兼容，本次操作未写入。';
     if (reason === 'storage') return '本地存储写入失败，请重试。';
     if (reason === 'duplicate') return '已存在于「' + ((info && info.groupName) || '未分组') + '」';
+    if (reason === 'duplicate-name') return '已有同名分组，换个名字。';
+    if (reason === 'invalid-name') return '分组名不能为空，且不超过 24 字。';
+    if (reason === 'system') return '「未分组」是系统分组，不能删除或改名。';
     if (reason === 'unknown-group') return '目标分组已不存在。';
     if (reason === 'not-found') return '条目已不存在，请刷新。';
     return '操作未完成，请重试。';
+  }
+
+  /** P3-4：删组二次确认文案（PRD L116）。n=0 时不谈条目，避免吓人。 */
+  function deleteGroupConfirmText(name, n) {
+    const groupName = name || '这个分组';
+    const count = Number(n) > 0 ? Number(n) : 0;
+    if (!count) {
+      return '删除分组「' + groupName + '」？组内没有收藏，删除不影响收藏内容。';
+    }
+    return '删除分组「' + groupName + '」？组内 ' + count + ' 条收藏会移到「未分组」，不会丢失。';
   }
 
   function showFavHint(kind, reason, info) {
@@ -1205,7 +1226,12 @@
   async function deleteCurrentGroup() {
     const store = favStore();
     if (!store) return;
-    if (typeof window.confirm === 'function' && !window.confirm('删除这个分组？组内条目会移到「未分组」，不会丢失。')) return;
+    const group = currentGroupObj();
+    const lib = await store.read();
+    const items = (lib && Array.isArray(lib.items)) ? lib.items : [];
+    const n = items.filter(x => x.groupId === favActiveGroup).length;
+    if (typeof window.confirm === 'function' &&
+        !window.confirm(deleteGroupConfirmText(group && group.name, n))) return;
     const r = await store.deleteGroup(favActiveGroup);
     if (!r.ok) { showFavHint('warn', r.reason, r); return; }
     favActiveGroup = FAV_GROUP_DEFAULT;
@@ -1323,6 +1349,20 @@
     activateTab('fav', false);
   }
 
+  // #36 P2-2(b)：弹窗常驻，卡片侧收藏/取消收藏后列表要立刻跟上。
+  // 只认收藏键、只认 local 区；无 onChanged（测试桩/旧环境）时静默跳过。
+  function bindFavoritesStorageSync() {
+    const oc = window.chrome && window.chrome.storage && window.chrome.storage.onChanged;
+    if (!oc || typeof oc.addListener !== 'function') return;
+    const store = favStore();
+    const key = (store && store.KEY) || 'hmp:favorites:v1';
+    oc.addListener((changes, area) => {
+      if (area && area !== 'local') return;
+      if (!changes || !changes[key]) return;
+      renderFavorites();
+    });
+  }
+
   // ---------------- 绑定 ----------------
   function bind() {
     // 主题
@@ -1375,6 +1415,7 @@
     });
 
     bindFavorites();
+    bindFavoritesStorageSync();
 
     if (!savedSnapshot) resetRes();
   }
@@ -1399,6 +1440,7 @@
       filter: filterFavorites, groupCounts, buildDeepLink, buildSearchLink,
       setGroup: id => { favActiveGroup = id || FAV_GROUP_DEFAULT; return renderFavorites(); },
       undoAlive, undoText, openMenu: openFavGroupMenu, showForm: showFavForm, showHint: showFavHint, clearHint: clearFavHint,
+      errorText: favErrorText, deleteGroupConfirmText,
       resetUi: () => { favMovingId = null; favHint = null; openFavGroupMenu(false); showFavForm('new', false); showFavForm('rename', false); },
       state: () => ({ activeTab, group: favActiveGroup, scope: favScope, query: favQuery }),
       __undo: () => favUndo

@@ -123,7 +123,7 @@ const lib = () => chrome.storage.local._store[KEY] || {};
   const gs = [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }];
   for (let i = 0; i < 29; i++) gs.push({ id: 'g' + i, name: '组' + i, system: false, createdAt: i });
   chrome.storage.local.set({ [KEY]: { schema: 1, groups: gs, items: [] } });
-  check('满 30 组 → limit', (await S.createGroup('再来一组')).reason === 'limit');
+  check('满 30 组 → limit-groups（与条目 500 上限区分）', (await S.createGroup('再来一组')).reason === 'limit-groups');
 
   // 并发回读-改-写：两次 add 都保留（顺序 await 模拟同页连续点击）
   reset();
@@ -132,6 +132,27 @@ const lib = () => chrome.storage.local._store[KEY] || {};
   const rc = await S.read();
   check('连续两次 add 都保留（整键回读-改-写）',
     rc.items.length === 2 && rc.items.some(x => x.steleId === 'c1') && rc.items.some(x => x.steleId === 'c2'));
+
+  // #36 P2-2(a)：真正并发（Promise.all）两次 add 也必须都保留。
+  // 未排队时两次都读到空库、后写覆盖先写 → 丢一条。
+  reset();
+  const pc = await Promise.all([
+    S.add({ steleId: 'p1', name: '并行一' }),
+    S.add({ steleId: 'p2', name: '并行二' }),
+  ]);
+  const rp = await S.read();
+  check('并发两次 add 都成功、两条都在（写串行队列）',
+    pc.length === 2 && pc.every(r => r && r.ok) && rp.items.length === 2 &&
+    rp.items.some(x => x.steleId === 'p1') && rp.items.some(x => x.steleId === 'p2'));
+
+  // 队列不因一次失败卡死：schema 拒写之后，清掉数据再写应恢复正常。
+  reset();
+  chrome.storage.local.set({ [KEY]: { schema: 2, groups: [], items: [] } });
+  const rejected = await S.add({ steleId: 'q1', name: '拒写' });
+  chrome.storage.local.remove(KEY);
+  const recovered = await S.add({ steleId: 'q2', name: '恢复后写' });
+  check('写失败不阻断后续写（队列不吞死）', rejected.reason === 'schema' && recovered.ok === true);
+
 
   // 1MB 上限：常量 + 分支存在（正常字段长度下到不了 1MB，防止静默截断）
   const src = fs.readFileSync(path.join(env.SRC, 'shared/favorites-store.js'), 'utf8');
