@@ -17,7 +17,7 @@
   // 三路来源先验：名称最精确，地址次之，坐标最弱。
   const SOURCE_PRIOR = { name: 1.0, address: 0.85, nearby: 0.75 };
   // 机关类：即使可参观性 rank 被标成 2，也不吃 1.12 的类型加成（降为 rank 1）。
-  const INSTITUTION_RE = /(人民政府|政府|党委|机关|事业单位|管理局|管理委员会|管委会|管理委|管理处|委员会|办事处|街道办)$/;
+  const INSTITUTION_RE = /(人民政府|政府|党委|机关|事业单位|管理局|管理委员会|管委会|管理委|管理处|委员会|办事处|街道办|党群服务中心|居民委员会|村民委员会|居委会|村委会|学校|小学|中学|大学|学院|幼儿园|医院|党校|法院|检察院)$/;
   // 办事机构类后缀（原在 pick 内部，提升为模块级供 scoreCandidate 使用）
   const ADMIN_SUFFIX_RE = /(管理委员会|管委会|管理委|管理处|办事处|管理局|管理中心)$/;
 
@@ -140,24 +140,39 @@
     // 这些是“身份词”而非服务设施（故宫→故宫博物院、良渚古城遗址公园 都是本体自身），
     // 列入会把合法本体一起拒掉（S2 实测 A01 故宫会变未匹配）。
   ];
-  const FACILITY_SIMADJ_CAP = 0.5; // 设施点上限：低于强证据线 0.85，也低于本体常见分
+  // #20：商户/商业点（店/饭店/公司/厂…）。与设施点同一条硬压路径：
+  //   ① 规范化后 STELE 名是候选前缀，剩余部分（剥噪声后缀后）包含/以商户词结尾；
+  //   ② 或候选整体以商户词结尾且不等于 STELE 名（本体不在候选里时，不能拿店名顶替）。
+  //   例：玄妙观 → 玄妙观宰鸡店 / 玄妙观饭店 / 宛城区人民政府（不命中，靠机构词处理）
+  const MERCHANT_WORDS = [
+    '宰鸡店', '饭店', '餐馆', '餐厅', '酒家', '酒楼', '宾馆', '酒店', '旅馆', '民宿',
+    '超市', '便利店', '商店', '礼品店', '门市', '批发', '公司', '工厂', '作坊', '修理',
+    '药房', '药店', '银行', '邮局', '加油站', '洗浴', '美发', '发廊', '网吧', '网咖',
+    '市场', '摊位', '店铺',
+    // 单字词只按“剩余部分结尾”判定，避免误伤（店铺/厂房这类复合词在上面的多字词里已覆盖）
+    '店', '厂', '铺',
+  ];
+  // #20：机关/事业点后缀（现有 INSTITUTION_RE 之外的补充），同样走硬压路径。
+  const INSTITUTION_HARD_WORDS = [
+    '党群服务中心', '居民委员会', '村民委员会', '居委会', '村委会',
+    '学校', '小学', '中学', '大学', '学院', '幼儿园',
+    '医院', '党校', '法院', '检察院',
+  ];
+  const FACILITY_SIMADJ_CAP = 0.5; // 设施/商户/机关点上限：低于强证据线 0.85，也低于本体常见分
 
-  /** 候选名相对目标名的“设施后缀词”；不是设施点则返回 ''。 */
-  function facilitySuffixOf(targetName, candName) {
+  /** 同一目标名下的候选剩余部分（原始名与规范化名两路；剥掉开头噪声后缀）。 */
+  function remaindersOf(targetName, candName) {
     const tRaw = stripParen(String(targetName == null ? '' : targetName).trim());
     const cRaw = stripParen(String(candName == null ? '' : candName).trim());
-    const pairs = [
-      [cRaw, tRaw],
-      [normalizeName(targetName), normalizeName(candName)],
-    ];
-    for (const [c, t] of pairs) {
+    const out = [];
+    for (const [c, t] of [[cRaw, tRaw], [normalizeName(targetName), normalizeName(candName)]]) {
       if (!t || !c || c.length <= t.length) continue;
       if (!c.startsWith(t)) continue;
       let rest = c.slice(t.length).trim();
       if (!rest) continue;
       // 规范化后目标名可能已去掉「遗址/公园/景区」等噪声词，
       // 候选剩余部分会以这些词开头（良渚遗址-莫角山遗址 + 游客服务中心）——
-      // 先剥掉开头的噪声词再看设施词。
+      // 先剥掉开头的噪声词再看类型词。
       for (let i = 0; i < 2; i++) {
         const before = rest;
         for (const w of NOISE_SUFFIX_WORDS) {
@@ -165,15 +180,62 @@
         }
         if (rest === before) break;
       }
+      out.push({ c, t, rest });
+    }
+    return out;
+  }
+
+  /** 候选名相对目标名的“设施后缀词”；不是设施点则返回 ''。 */
+  function facilitySuffixOf(targetName, candName) {
+    for (const r of remaindersOf(targetName, candName)) {
       for (const w of FACILITY_WORDS) {
-        if (rest.startsWith(w)) return w;
+        if (r.rest.startsWith(w)) return w;
       }
     }
     return '';
   }
-  /** 候选是否为“本体 + 设施后缀”的设施点（#14-S2）。 */
+
+  /** 候选是本体里的设施点（#14-S2）。 */
   function isFacility(targetName, candName) {
     return facilitySuffixOf(targetName, candName) !== '';
+  }
+
+  /** 候选是商户/商业点（#20）：前缀 + 剩余含商户词，或整体以商户词结尾且不等同本体。 */
+  function merchantSuffixOf(targetName, candName) {
+    for (const r of remaindersOf(targetName, candName)) {
+      for (const w of MERCHANT_WORDS) {
+        const hit = w.length === 1 ? r.rest.endsWith(w) : r.rest.indexOf(w) >= 0;
+        if (hit) return w;
+      }
+    }
+    // 总监 #20 收窄：**不允许**仅因“候选整体以商户词结尾”就排除。
+    // 项目刻意不按商业类型排除（马勒住宅→上海马勒别墅饭店、上海国际饭店→饭店、
+    // 外滩大楼→银行、永安公司→百货商场 都是正确答案）。只有“STELE 名是前缀、
+    // 多出一段含商户词”的借用名才算商户点。
+    return '';
+  }
+
+  function isMerchant(targetName, candName) { return merchantSuffixOf(targetName, candName) !== ''; }
+  function isInstitution(targetName, candName) { return institutionSuffixOf(targetName, candName) !== ''; }
+  function exclusionKindOf(targetName, candName) {
+    const fw = facilitySuffixOf(targetName, candName);
+    if (fw) return { kind: 'facility', word: fw };
+    const mw = merchantSuffixOf(targetName, candName);
+    if (mw) return { kind: 'merchant', word: mw };
+    const iw = institutionSuffixOf(targetName, candName);
+    if (iw) return { kind: 'institution', word: iw };
+    return null;
+  }
+
+  /** 候选是机关/事业点（#20）：前缀 + 剩余以机关/事业词开头。 */
+  function institutionSuffixOf(targetName, candName) {
+    for (const r of remaindersOf(targetName, candName)) {
+      for (const w of INSTITUTION_HARD_WORDS) {
+        // 用包含判定：玄妙观社区医院 / 玄妙观实验小学 这类中间还有词
+        if (r.rest.indexOf(w) >= 0) return w;
+      }
+    }
+    return '';
   }
 
   const CONTAIN_BONUS = 0.06;    // 候选是目标的"简短常用名"时加权
@@ -511,9 +573,13 @@
       simAdj = Math.max(0, Math.min(1, sim * absence));
     }
 
-    // #14-S2：设施点硬压。simAdj ≤0.5 ⇒ 必然低于 NAME_STRONG_SIM，不吃类型加成。
+    // #14-S2 / #20：设施点、商户点、机关事业点同一条硬压路径。
+    //   simAdj ≤0.5 ⇒ 必然低于 NAME_STRONG_SIM，不吃类型加成，pick 直接跳过。
     const facilityWord = facilitySuffixOf(targetName, cName);
-    const facility = facilityWord !== '';
+    const merchantWord = merchantSuffixOf(targetName, cName);
+    const institutionWord = institutionSuffixOf(targetName, cName);
+    const excludeKind = facilityWord ? 'facility' : (merchantWord ? 'merchant' : (institutionWord ? 'institution' : ''));
+    const facility = excludeKind !== '';
     if (facility) simAdj = Math.min(simAdj, FACILITY_SIMADJ_CAP);
 
     let typeRank = 0, mult = 1;
@@ -538,7 +604,8 @@
       source, sourcePrior: prior, absence,
       core: ev.core, prefixLen: ev.prefixLen, suffixLen: ev.suffixLen,
       coverRatio: ev.coverRatio, abstain: !!ev.abstain,
-      facility, facilityWord,
+      facility, facilityWord, excludeKind, merchantWord, institutionWord,
+      merchant: !!merchantWord, institution: !!institutionWord,
     };
   }
 
@@ -548,6 +615,9 @@
     nameScore,
     subUnitPenalty,
     isFacility,
+    isMerchant,
+    isInstitution,
+    exclusionKindOf,
     haversine,
     passes,
 
@@ -624,7 +694,7 @@
       for (const s of scored) {
         // #14-S2：设施点（本体+游客服务中心/警务站/停车场…）永不当结果：
         // 这类候选只在“本体不存在”时才会赢，宁可未匹配也不认。
-        if (s.facility) continue;
+        if (s.excludeKind) continue;
         if (passes(s.sim, s.dist)) return s;
       }
       return null;

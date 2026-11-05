@@ -209,14 +209,16 @@ function runOnce(opts, matcher) {
       ...(r.pick || { actualPick: null, score: null, source: c.route || null, sim: null, simAdj: null, dist: null }),
     });
   }
-  if (Array.isArray(data.C) && data.C.length) {
-    const c = data.C[0];
+  // #20：C 集允许多条用户案例（C01=P13、C02=玄妙观商户错配），逐条跑。
+  cases.C = [];
+  for (const c of data.C || []) {
     const r = pickTop1(matcher, c, opts.kp, opts.ks);
-    cases.C = {
-      id: c.id, steleName: c.steleName,
+    cases.C.push({
+      id: c.id, steleName: c.steleName, expected: c.expected == null ? null : c.expected,
+      candidates: (c.candidates || []).map(x => x && x.name).filter(Boolean),
       before: c.before && Object.keys(c.before).length ? c.before : null,
       after: r.pick,
-    };
+    });
   }
   return cases;
 }
@@ -233,6 +235,24 @@ function diffTop1(before, after) {
     }
   }
   return { diff, pairs };
+}
+
+// #22：单条 C 案例判定（期望字段优先）。
+//   - expected='unmatched'：必须未匹配；
+//   - 候选里有本体：必须选本体（验「本体优先」不被误压）；
+//   - expected 含「不得选」：未匹配或非排除点即通过；
+//   - 其它：有 pick 且不是排除点即通过。
+function verdictOf(matcher, c) {
+  const pick = c.after && c.after.actualPick != null ? c.after.actualPick : null;
+  const expect = c.expected;
+  if (expect === 'unmatched') return { ok: pick === null, why: pick === null ? '未匹配（符合期望）' : '期望未匹配，实际选到 ' + pick };
+  const excluded = pick && matcher && typeof matcher.exclusionKindOf === 'function'
+    ? matcher.exclusionKindOf(c.steleName, pick) : null;
+  if (excluded) return { ok: false, why: '选中被排除点(' + excluded.kind + ')：' + pick };
+  const hasSelf = (c.candidates || []).indexOf(c.steleName) >= 0;
+  if (hasSelf) return { ok: pick === c.steleName, why: pick === c.steleName ? '选本体' : (pick ? '本体在候选内但选了 ' + pick : '本体在候选内却未匹配') };
+  if (typeof expect === 'string' && expect.indexOf('不得选') >= 0) return { ok: pick === null, why: pick === null ? '未匹配（符合期望）' : '期望不选排除点，实际选到 ' + pick };
+  return { ok: pick !== null, why: pick === null ? '未匹配' : 'pick 非排除点' };
 }
 
 function isFacilityPick(matcher, steleName, pickName) {
@@ -317,7 +337,7 @@ function main() {
       counts: computeRates(firstResult ? firstResult.after.B : [], afterMatcher),
       cases: firstResult ? firstResult.after.B : [],
     },
-    C: firstResult ? firstResult.after.C : { before: null, after: null },
+    C: firstResult ? firstResult.after.C : [],
     D: { suites: [], total: 0, pass: 0, fail: 0, note: '由 npm test 产出，本脚本不代跑' },
     top1Diff,
     // #19：S 阶段把差异定位成「预期」并给出 id；L 阶段仍以 0 为硬约束。
@@ -335,6 +355,13 @@ function main() {
         : '阶段 S：KP/KS 参与评分（由后续 commit 实现；当前 matcher 未变更时不生效）',
     },
   };
+  // #22：C 集逐条判定（verdict 用 expected 字段 + 候选里是否有本体），任一条不符即硬约束失败。
+  //   L/S 两个阶段都判：C 是用户真机案例，不允许静默只报第一条。
+  result.C = (result.C || []).map(cc => Object.assign({}, cc, { verdict: verdictOf(afterMatcher, cc) }));
+  for (const cc of result.C) {
+    if (!cc.verdict.ok) hard.push(cc.id + ' 不符：' + cc.verdict.why);
+  }
+
   // ── #14-S：阶段 S 的验收计数与强证据线三档 ──
   let strongSweep = null;
   if (opts.stage === 'S') {
@@ -347,12 +374,10 @@ function main() {
     if (result.B.counts.institutionHit !== 0) hard.push('B 集机构命中 ' + result.B.counts.institutionHit + '（要求 0）');
     if (result.B.counts.facilityHit !== 0) hard.push('B 集设施命中 ' + result.B.counts.facilityHit + '（要求 0）');
     if (result.B.counts.homonymFalsePick !== 0) hard.push('B 集远同名误选 ' + result.B.counts.homonymFalsePick + '（要求 0）');
-    const cPick = result.C && result.C.after ? result.C.after.actualPick : null;
-    if (cPick && /警务/.test(cPick)) hard.push('C 集仍选中警务机构：' + cPick);
     strongSweep = [];
     for (const st of [0.75, 0.80, 0.85]) {
       const r = runOnce({ ...opts, kp: opts.kp, ks: opts.ks, strong: st }, afterMatcher);
-      strongSweep.push({ strong: st, A: summarizeA(r.A, afterMatcher), B: computeRates(r.B, afterMatcher), C: r.C ? r.C.after : null });
+      strongSweep.push({ strong: st, A: summarizeA(r.A, afterMatcher), B: computeRates(r.B, afterMatcher), C: (r.C || []).map(c => c.after) });
     }
     result.strongSweep = strongSweep;
     result.beforeCounts = beforeCounts;
@@ -429,9 +454,17 @@ function main() {
          '| id | stele | after top1 |', '|---|---|---|',
          ...result.B.counts.homonymAmbiguous.map(a => '| ' + a.id + ' | ' + a.steleName + ' | ' + (a.actualPick == null ? '（未匹配）' : a.actualPick) + ' |'), '']
       : []),
-    '## C 集（用户案例 P13）',
+    '## C 集（用户真机案例）',
     '',
-    result.C ? 'before: `' + JSON.stringify(result.C.before) + '`\n\nafter: `' + JSON.stringify(result.C.after) + '`' : '_无案例_',
+    ...(result.C && result.C.length
+      ? ['| id | stele | expected | pick | sim | dist | source | verdict |', '|---|---|---|---|---|---|---|---|',
+         ...result.C.map(c => '| ' + c.id + ' | ' + c.steleName + ' | ' + (c.expected == null ? '—' : c.expected) + ' | '
+           + (c.after && c.after.actualPick ? c.after.actualPick : '（未匹配）') + ' | '
+           + (c.after && c.after.sim != null ? c.after.sim : '—') + ' | '
+           + (c.after && c.after.dist != null ? c.after.dist + ' m' : '—') + ' | '
+           + (c.after && c.after.source ? c.after.source : '—') + ' | '
+           + (c.verdict.ok ? '✅ ' : '❌ ') + c.verdict.why + ' |')]
+      : ['_无案例_']),
     '',
   ];
   if (opts.sweep) {
@@ -446,6 +479,7 @@ function main() {
   console.log('result.json → ' + path.join(outDir, 'result.json'));
   console.log('report.md   → ' + path.join(outDir, 'report.md'));
   console.log('top1Diff=' + top1Diff + ' A=' + JSON.stringify(result.A.counts) + ' B=' + JSON.stringify(result.B.counts));
+  console.log('C=' + JSON.stringify((result.C || []).map(c => ({ id: c.id, pick: c.after && c.after.actualPick }))));
   if (hard.length) {
     console.error('硬约束未满足：\n- ' + hard.join('\n- '));
     process.exit(1);

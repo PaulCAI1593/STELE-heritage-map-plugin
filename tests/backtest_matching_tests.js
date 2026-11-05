@@ -92,5 +92,24 @@ const diffResult = JSON.parse(fs.readFileSync(path.join(tmp, 'diff', 'result.jso
 check('负例：behavior 改动导致 top1 差异 > 0 → exit 1', diff.code === 1 && diffResult.top1Diff > 0,
   'exit=' + diff.code + ' diff=' + diffResult.top1Diff);
 
+// #22：C 集全量遍历 + 逐条 verdict（不得静默只报 C[0]）
+const casesWithC = JSON.parse(fs.readFileSync(CASES, 'utf8'));
+casesWithC.C = [
+  { id: 'CX1', steleName: '玄妙观', expected: 'unmatched', route: 'name', targetLon: 112.53, targetLat: 33.0,
+    candidates: [{ name: '玄妙观宰鸡店', lon: 112.531, lat: 33.001, rank: 1, type: '餐饮' }] },
+  { id: 'CX2', steleName: '玄妙观', expected: '不得选商户口', route: 'name', targetLon: 112.53, targetLat: 33.0,
+    candidates: [{ name: '玄妙观宰鸡店', lon: 112.531, lat: 33.001, rank: 1, type: '餐饮' },
+                 { name: '玄妙观', lon: 112.53, lat: 33.0, rank: 2, type: '风景名胜' }] },
+];
+const cFile = path.join(tmp, 'cases-c.json');
+fs.writeFileSync(cFile, JSON.stringify(casesWithC));
+const outC = path.join(tmp, 'c');
+const cRun = run(['--stage', 'S', '--kp', '0.04', '--ks', '0.02', '--strong', '0.85', '--out', outC, '--cases', cFile]);
+const cRes = JSON.parse(fs.readFileSync(path.join(outC, 'result.json'), 'utf8'));
+const cMd = fs.readFileSync(path.join(outC, 'report.md'), 'utf8');
+check('#22 C 集遍历全部案例并逐条 verdict（不只 C[0]）',
+  cRun.code === 0 && cRes.C.length === 2 && cRes.C.every(c => c.verdict && c.verdict.ok) && /CX1/.test(cMd) && /CX2/.test(cMd),
+  'exit=' + cRun.code + ' C=' + JSON.stringify(cRes.C.map(c => ({ id: c.id, ok: c.verdict && c.verdict.ok }))));
+
 fs.rmSync(tmp, { recursive: true, force: true });
 finish();
