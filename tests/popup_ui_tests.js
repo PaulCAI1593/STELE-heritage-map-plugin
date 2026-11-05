@@ -35,9 +35,19 @@ console.log('\n=== 结构：状态带、行内测试、主题开关、页脚 ===
   check('六态名齐全（html+js 内声明）',
     ['empty', 'ready', 'testing', 'test-ok', 'test-fail', 'dirty'].every(s => js.includes("'" + s + "'")));
   check('有常驻状态带 #band', html.includes('id="band"'));
-  check('有未保存提示元素 #dirtyHint（旧断言兼容）', html.includes('id="dirtyHint"'));
-  check('提示文案含「未保存的修改」与「才会生效」',
-    /未保存的修改/.test(html) && /才会生效/.test(html));
+  // 视觉守门返修：独立提示行已删，改为断言「状态带承载未保存文案 + 无重复提示」
+  check('dirty 态状态带标题含「有未保存的修改」', /有未保存的修改/.test(js));
+  check('dirty 态状态带说明含「才会生效」与「自动先保存」',
+    /才会生效/.test(js) && /自动先保存/.test(js));
+  check('不再有重复的独立提示行（html 无 #dirtyHint）', !html.includes('dirtyHint') && !html.includes('dirty-hint'));
+  check('不再有 .dirty-hint 样式（css 已清）', !css.includes('.dirty-hint'));
+  // §八 视觉守门返修：三键一行 + band 内边距 + 底部留白
+  check('三个按钮同处一个 .acts 行（不再有两行）', (html.match(/class="acts"/g) || []).length === 1);
+  check('导出决策为次级自适应按钮 .btn-aux',
+    /class="[^"]*btn-aux[^"]*"[^>]*id="exportLog"/.test(html));
+  check('.btn-aux 宽度自适应（flex:0 0 auto）', /\.btn-aux\{[^}]*flex:0 0 auto/.test(css));
+  check('.band 内边距为 6px 10px', /\.band\{[^}]*padding:6px 10px/.test(css));
+  check('页脚底部留白 >=10px（margin-bottom 12px 留余量）', /\.hmp-foot\{[^}]*margin:0 12px 12px/.test(css));
   check('两个 Key 各有行内测试按钮',
     html.includes('data-test="amap"') && html.includes('data-test="baidu"'));
   check('两个 Key 各有行内结果行',

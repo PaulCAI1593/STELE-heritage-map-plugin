@@ -170,13 +170,6 @@
       const n = (currentKey('amapKey') ? 1 : 0) + (currentKey('baiduAk') ? 1 : 0);
       title = '已填写 ' + n + ' 个 Key · 尚未测试';
     }
-    if (currentState === 'dirty') {
-      const el = $('dirtyHint');
-      if (el) el.hidden = false;
-    } else {
-      const el = $('dirtyHint');
-      if (el) el.hidden = true;
-    }
     setBand(conf.band, title, desc);
     updateKeyStates();
     return currentState;
@@ -255,9 +248,6 @@
   }
 
   function updateDirtyHint() {
-    const el = $('dirtyHint');
-    const dirty = isDirty();
-    if (el) el.hidden = !dirty;
     updateKeyStates();
     if (busy) return;              // 测试中不抢状态带
     renderState(computeState());

@@ -220,10 +220,12 @@ async function baiduMap(poi) {
     const js = fs.readFileSync(path.join(__dirname, '..', 'src', 'popup', 'popup.js'), 'utf8');
     const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'popup', 'popup.css'), 'utf8');
 
-    check('popup 有"未保存"提示条元素', html.includes('id="dirtyHint"'));
-    check('提示条有样式', css.includes('.dirty-hint'));
-    check('提示条文案点明"点保存才生效"',
-      /未保存的修改/.test(html) && /才会生效/.test(html));
+    // 视觉守门返修（#04 §八）：独立提示条已删，改由状态带承载；此处按语义断言，并加负例
+    check('dirty 态状态带标题提示未保存', /有未保存的修改/.test(js));
+    check('状态带文案点明"点保存才生效"且说明测试会先保存',
+      /才会生效/.test(js) && /自动先保存/.test(js));
+    check('不再有重复的独立提示条（html/css 均已清）',
+      !html.includes('dirtyHint') && !css.includes('.dirty-hint'));
 
     check('popup 记录了已保存快照', /savedSnapshot/.test(js));
     check('popup 能判断是否脏', /function isDirty/.test(js));

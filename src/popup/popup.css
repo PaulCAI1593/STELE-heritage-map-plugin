@@ -38,7 +38,7 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 .seg-b:focus-visible{outline:2px solid var(--hmp-link);outline-offset:-2px}
 
 /* 常驻状态带（三合一） */
-.band{display:flex;gap:9px;align-items:flex-start;margin:0 12px 4px;padding:5px 10px;
+.band{display:flex;gap:9px;align-items:flex-start;margin:0 12px 4px;padding:6px 10px;
   border:1px solid var(--hmp-idle-line);border-radius:var(--hmp-r-sm);background:var(--hmp-idle-bg);color:var(--hmp-idle-ink)}
 .band .ic{flex:0 0 auto;width:16px;height:16px;margin-top:1px}
 .band-t{flex:1 1 auto;min-width:0;font-size:13px;font-weight:600;line-height:1.4}
@@ -88,7 +88,7 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 .adv select:focus-visible{outline:2px solid var(--hmp-link);outline-offset:-1px}
 
 /* 操作 */
-.acts{display:flex;gap:8px;padding:0 12px;margin-bottom:2px}
+.acts{display:flex;gap:8px;align-items:stretch;padding:0 12px;margin-bottom:6px}
 .btn{flex:1 1 0;min-height:32px;padding:7px 10px;font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;border-radius:var(--hmp-r-sm);
   border:1px solid transparent;cursor:pointer;transition:background .15s}
 .btn.show{flex:0 0 auto;min-height:32px;padding:7px 10px}
@@ -97,6 +97,7 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 .btn.primary:hover{background:var(--hmp-primary-h)}
 .btn.sec{background:var(--hmp-input-bg);color:var(--hmp-text);border-color:var(--hmp-border)}
 .btn.sec:hover{background:var(--hmp-hover)}
+.btn-aux{flex:0 0 auto;min-width:0;padding-left:12px;padding-right:12px}
 .btn[disabled]{opacity:.72;cursor:default}
 .btn.busy{background:var(--hmp-input-bg);color:var(--hmp-info-ink);border-color:var(--hmp-info-line)}
 
@@ -122,8 +123,7 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 .upd-btn:hover{color:var(--hmp-primary-h)}
 .upd-btn:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px;border-radius:2px}
 .upd-btn[disabled]{color:var(--hmp-muted);cursor:default;text-decoration:none}
-.hmp-foot{margin:0 12px 3px;font-size:12px;line-height:1.4;color:var(--hmp-muted)}
-.popup--foot .hmp-foot{margin-bottom:8px}
+.hmp-foot{margin:0 12px 12px;font-size:12px;line-height:1.4;color:var(--hmp-muted)}
 
 @media (prefers-reduced-motion:reduce){.spin{animation:none}*{transition:none!important}}
 @media (max-width:359px){.band{flex-wrap:wrap}.band-m{max-width:100%;text-align:left}}
@@ -211,10 +211,6 @@ body{width:380px;max-width:100vw;margin:0;background:var(--hmp-page)}
 .res-ok{color:var(--hmp-ok-ink)}
 .res-fail{color:var(--hmp-err-ink)}
 .res .res-more{color:var(--hmp-muted);font-weight:400}
-
-/* 未保存提示条（沿用旧元素 id，视觉并入主题） */
-.dirty-hint{color:var(--hmp-warn-ink);margin:3px 12px 4px;padding:4px 8px;border:1px solid var(--hmp-warn-line);
-  border-radius:var(--hmp-r-sm);background:var(--hmp-warn-bg);font-size:12px;line-height:1.45}
 
 /* 页脚：版本 + 检测更新 + 更新可用时的下载行 */
 .upd{flex-wrap:wrap}
