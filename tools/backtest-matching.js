@@ -113,7 +113,9 @@ function pickTop1(matcher, c, kp, ks) {
       // #27：短名后缀候选（靳岗天主教堂 → 天主堂 6.2 km）同样放宽到 10 km，与业务侧一致。
       const exact = typeof matcher.isExactName === 'function' && matcher.isExactName(c.steleName, x.name);
       const short = typeof matcher.shortFormOf === 'function' && !!matcher.shortFormOf(c.steleName, x.name);
-      const limit = (exact || short) ? (matcher.COORD_DRIFT_MAX_DIST || 10000) : NAME_MAX_DIST;
+      // #29：同址强证据（…遗址文化园 ⊃ …遗址）同样放宽到 10 km。
+      const same = typeof matcher.sameSiteOf === 'function' && !!matcher.sameSiteOf(c.steleName, x.name);
+      const limit = (exact || short || same) ? (matcher.COORD_DRIFT_MAX_DIST || 10000) : NAME_MAX_DIST;
       if (distM(tLon, tLat, x.lon, x.lat) > limit) return false;
     }
     return true;
@@ -143,6 +145,8 @@ function pickTop1(matcher, c, kp, ks) {
       sim: Number.isFinite(m.sim) ? Math.round(m.sim * 1e6) / 1e6 : null,
       simAdj: Number.isFinite(m.simAdj) ? Math.round(m.simAdj * 1e6) / 1e6 : (Number.isFinite(m.sim) ? Math.round(m.sim * 1e6) / 1e6 : null),
       dist: Number.isFinite(m.dist) ? Math.round(m.dist) : null,
+      // #29：地名兜底（卡片一律给距离提示，距离校验不再受 3 km 下限限制）
+      weakMatch: !!m.weakMatch, sameSite: !!m.sameSite,
     },
     dump,
   };
@@ -314,15 +318,14 @@ function driftKmOf(matcher, c) {
   return Math.round(a.dist / 100) / 10;
 }
 
-// #27：C 段远距离校验（与 #22b drift 同构）。
-//   口径与业务侧 final.coordinateDistanceKm 一致：命中且直线距离 > 3 km 时取 1 位小数公里
-//   （round(dist/100)/10）；短名（天主堂 6.2 km）与同名（玄妙观 6.7 km）都算。
+// #27/#29：C 段距离校验（与 #22b drift 同构）。
+//   校验的是数据集写的 expectedDistanceKm＝点位到选中点的直线距离（1 位小数公里），
+//   不是「卡片有没有显示距离提示」：<3 km 的普通/同址命中不显示提示，但距离仍是事实。
 //   case 带 expectedDistanceKm 时，实际距离必须落在 distanceToleranceKm（默认 0.05 km）内。
 const DISTANCE_TOLERANCE_DEFAULT_KM = 0.05;
 function distanceKmOf(c) {
   const a = c && c.after;
   if (!a || a.actualPick == null || !Number.isFinite(a.dist)) return null;
-  if (a.dist <= NAME_MAX_DIST) return null;
   return Math.round(a.dist / 100) / 10;
 }
 
@@ -344,7 +347,7 @@ function verdictOf(matcher, c) {
     const actual = distanceKmOf(c);
     const tolD = Number.isFinite(c.distanceToleranceKm) ? c.distanceToleranceKm : DISTANCE_TOLERANCE_DEFAULT_KM;
     if (actual == null) {
-      return { ok: false, why: out.why + '；期望远距离 ' + c.expectedDistanceKm + ' km，但未命中或距离 ≤3 km' };
+      return { ok: false, why: out.why + '；期望距离 ' + c.expectedDistanceKm + ' km，但未命中或无距离' };
     }
     const delta = Math.abs(actual - c.expectedDistanceKm);
     if (delta > tolD + 1e-9) {

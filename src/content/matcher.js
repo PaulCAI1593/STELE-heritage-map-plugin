@@ -174,7 +174,10 @@
     const tRaw = stripParen(String(targetName == null ? '' : targetName).trim());
     const cRaw = stripParen(String(candName == null ? '' : candName).trim());
     const out = [];
-    for (const [c, t] of [[cRaw, tRaw], [normalizeName(targetName), normalizeName(candName)]]) {
+    // #29：第二组必须按「候选, 目标」顺序——原实现写反（[目标, 候选]），
+    //   规范化路径永远被 c.length <= t.length 挡掉，导致目标带「遗址/公园/景区」
+    //   等噪声词时，商户/设施/机关/行政排除全部失效（十里庙遗址 vs 十里庙民生副食店）。
+    for (const [c, t] of [[cRaw, tRaw], [normalizeName(candName), normalizeName(targetName)]]) {
       if (!t || !c || c.length <= t.length) continue;
       if (!c.startsWith(t)) continue;
       let rest = c.slice(t.length).trim();
@@ -258,6 +261,8 @@
   const SHORT_FORM_SIMADJ_FLOOR = 0.86;
   const SHORT_FORM_PREFIX_MAX = 4;
   const SHORT_FORM_MAX_DIST = 10000; // 与 COORD_DRIFT_MAX_DIST 同源：3–10 km 的短名/同名都按本体采用
+  // #29：地名兜底只在“候选就在点位附近”时采用，与名称路 3 km 闸门同口径。
+  const WEAK_MATCH_MAX_DIST = 3000;
 
   function shortFormOf(targetName, candName) {
     const t = normalizeName(targetName), c = normalizeName(candName);
@@ -297,6 +302,70 @@
     if (isExactName(targetName, candName)) return false;
     if (shortFormOf(targetName, candName)) return false;
     return SHORT_FORM_COMMON_WORDS.some(w => c === w || (c.endsWith(w) && c.length - w.length < 2));
+  }
+
+  // ── #29 类型词与地名兜底 ───────────────────────────────────────────────
+  // 类型词必须从**原始名**（先 stripParen）尾部识别：normalizeName 会把「遗址/清真寺」
+  // 一起当噪声剥掉，两侧抵消后「十里庙遗址 vs 十里庙清真寺」被误判成完全同名，
+  // 不能复用 normalizeName。长词优先：遗址公园先行，避免只剥到「公园」。
+  const TYPE_WORDS = [
+    ['遗址公园', 'site'], ['遗址', 'site'], ['城址', 'site'], ['墓葬', 'site'],
+    ['窑址', 'site'], ['古城', 'site'], ['古墓', 'site'], ['故居', 'site'],
+    ['旧址', 'site'], ['古建筑', 'site'], ['石刻', 'site'],
+    ['清真寺', 'religion'], ['礼拜堂', 'religion'], ['教堂', 'religion'],
+    ['寺', 'religion'], ['庙', 'religion'], ['庵', 'religion'], ['观', 'religion'],
+    ['祠', 'religion'], ['宫', 'religion'],
+    ['博物院', 'museum'], ['博物馆', 'museum'], ['纪念馆', 'museum'],
+    ['展览馆', 'museum'], ['陈列馆', 'museum'],
+    ['文化园', 'park'], ['公园', 'park'], ['景区', 'park'],
+    ['副食店', 'commerce'], ['小卖部', 'commerce'], ['饭店', 'commerce'],
+    ['酒店', 'commerce'], ['宾馆', 'commerce'], ['商店', 'commerce'],
+    ['超市', 'commerce'], ['银行', 'commerce'], ['公司', 'commerce'], ['店', 'commerce'],
+    ['公墓', 'funeral'], ['陵园', 'funeral'], ['墓地', 'funeral'],
+  ];
+
+  /** #29：原始名尾部的类型词族；无类型词返回 null（机关类复用 INSTITUTION_RE）。 */
+  function typeFamilyOf(rawName) {
+    const n = stripParen(String(rawName == null ? '' : rawName).trim());
+    if (!n) return null;
+    for (const [w, family] of TYPE_WORDS) {
+      if (n.length >= w.length && n.endsWith(w)) return { family, word: w };
+    }
+    if (INSTITUTION_RE.test(n)) return { family: 'institution', word: '' };
+    return null;
+  }
+
+  /** #29：候选原始名以目标原始名开头（同址强证据，如 十里庙遗址文化园 ⊃ 十里庙遗址）。
+   *  必须要求是**前缀**：沈阳故宫博物院 也“包含”故宫，但那是另一个地方，不能算同址。 */
+  function sameSiteOf(targetName, candName) {
+    const t = stripParen(String(targetName == null ? '' : targetName).trim());
+    const c = stripParen(String(candName == null ? '' : candName).trim());
+    return !!t && !!c && c.length > t.length && c.indexOf(t) === 0 && !!typeFamilyOf(c);
+  }
+
+  /**
+   * #29：类型冲突 = 两侧都有类型词、族不同，且不属于两种兼容。
+   *   兼容①：候选包含目标（同址强证据）；兼容②：目标包含候选（本体后缀，原分）。
+   *   候选尾部的类型词若本来就落在目标的地名核心里（十里庙 vs 南阳十里庙 的「庙」），
+   *   它只是地名用字，不算类型后缀 —— 否则会把她名兜底也判成冲突。
+   */
+  function typeConflictOf(targetName, candName) {
+    const tRaw = stripParen(String(targetName == null ? '' : targetName).trim());
+    const cRaw = stripParen(String(candName == null ? '' : candName).trim());
+    if (!tRaw || !cRaw) return null;
+    const candContains = sameSiteOf(targetName, candName);
+    const targetContains = tRaw.length > cRaw.length && tRaw.indexOf(cRaw) >= 0;
+    const tf = typeFamilyOf(tRaw);
+    let cf = typeFamilyOf(cRaw);
+    if (cf && cf.word && normalizeName(targetName).indexOf(cf.word) >= 0) cf = null;
+    const compatible = candContains || targetContains;
+    return {
+      targetFamily: tf ? tf.family : null,
+      candFamily: cf ? cf.family : null,
+      candContains,
+      targetContains,
+      conflict: !compatible && !!(tf && cf && tf.family !== cf.family),
+    };
   }
 
   function isMerchant(targetName, candName) { return merchantSuffixOf(targetName, candName) !== ''; }
@@ -673,16 +742,39 @@
     // #27：短名后缀（靳岗天主教堂 → 天主堂）。只认名称路、且候选不是借用名。
     //   短名的原始 sim 只有 0.5 左右，进不了 passes() 的 0.7 闸门；
     //   这里把 simAdj 抬到强证据线以上，sim 原值保留，供 dump/日志对照。
-    const shortForm = (source === 'name' && !facility) ? shortFormOf(targetName, cName) : null;
+    // #29：类型词冲突（十里庙遗址 vs 十里庙清真寺）与同址强证据（…文化园 ⊃ …遗址）。
+    //   冲突点与设施/商户同一条硬压路径：simAdj≤0.5、不吃类型加成、pick/统一池跳过；
+    //   同址强证据把 simAdj 抬到 0.92，优先级在 exact 之后、shortForm 之前。
+    const typeInfo = typeConflictOf(targetName, cName) || {};
+    // 设施/商户/机关等借用名即使包含目标名也不算同址证据（游客服务中心不能抬到 0.92）。
+    // 同址强证据还要求候选剩余部分确实是**类型词**（文化园/景区/遗址…）：
+    //   莫高窟数字展示中心 只是名字以「莫高窟」开头，不是同一处，不能算同址。
+    const sameSite = source === 'name' && !facility && !!typeInfo.candContains && !!typeInfo.candFamily;
+    // 类型词冲突只对**名称路**成立：地址/坐标路是按门牌、按位置命中的证据，
+    //   与名字里写的是什么类型无关（兆丰花园遗址 在 长宁路780号 → 中山公园 是正确命中）。
+    const typeConflict = source === 'name' && !!typeInfo.conflict;
+    if (typeConflict) simAdj = Math.min(simAdj, FACILITY_SIMADJ_CAP);
+    if (sameSite) simAdj = Math.max(simAdj, 0.92);
+
+    const shortForm = (source === 'name' && !facility && !typeConflict)
+      ? shortFormOf(targetName, cName) : null;
     if (shortForm) simAdj = Math.max(simAdj, SHORT_FORM_SIMADJ_FLOOR);
     // #27：纯通名（教堂/礼拜堂/城墙/博物院/广场…）不作名称证据——pick 与统一池跳过。
     const generic = source === 'name' && isGenericName(targetName, cName);
+    // #29：地名兜底（十里庙遗址 → 南阳十里庙 328 m）：候选无类型词（族空），
+    //   名字里含目标的地名核心。只作最低优先级，卡片一律给距离提示。
+    const coreName = normalizeName(targetName);
+    // 注意排除本身同名（南阳武侯祠 vs 南阳武侯祠）：那是 exact，不是兜底。
+    const weakMatch = source === 'name' && !facility && !typeConflict && !sameSite && !shortForm &&
+      !isExactName(targetName, cName) &&
+      !typeInfo.candFamily && coreName.length >= 2 &&
+      normalizeName(cName).indexOf(coreName) >= 0;
 
     let typeRank = 0, mult = 1;
     if (o.rankFn) {
       typeRank = o.rankFn(c) || 0;
       if (INSTITUTION_RE.test(cName)) typeRank = 1;
-      if (!facility && simAdj >= CALIBRATION.NAME_STRONG_SIM) {
+      if (!facility && !typeConflict && simAdj >= CALIBRATION.NAME_STRONG_SIM) {
         mult = typeRank === 2 ? 1.12 : (typeRank === 0 ? 0.7 : 1.0);
       }
     } else if (INSTITUTION_RE.test(cName)) {
@@ -696,7 +788,7 @@
     const prior = SOURCE_PRIOR[source] || 1;
     // #24：完全同名（规范化名相等，或 sim≥0.98 且无子单元标记）——3–10 km 也按本体采用。
     // 借用名（商户/行政/设施）永远不算同名本体。
-    const exactName = !excludeKind &&
+    const exactName = !excludeKind && !typeConflict && !sameSite && !weakMatch &&
       (isExactName(targetName, cName) || (sim >= 0.98 && !isSub));
     const score = (simAdj * 0.6 + distScore * 0.4) * mult * subPen * custPen * prior;
     return {
@@ -707,6 +799,10 @@
       coverRatio: ev.coverRatio, abstain: !!ev.abstain, exactName,
       shortForm: !!shortForm, shortFormCore: shortForm ? shortForm.core : null,
       generic: !!generic,
+      // #29：类型词冲突 / 同址强证据 / 地名兜底 + 排序档位（exact3 > 同址2 > 短名1 > 兜底0）
+      sameSite, typeConflict, weakMatch,
+      typeFamily: { target: typeInfo.targetFamily || null, cand: typeInfo.candFamily || null },
+      tier: (excludeKind || typeConflict) ? -1 : (exactName ? 3 : (sameSite ? 2 : (shortForm ? 1 : 0))),
       facility, facilityWord, excludeKind, merchantWord, institutionWord, communityWord,
       merchant: !!merchantWord, institution: !!institutionWord,
     };
@@ -723,7 +819,12 @@
     isExactName,
     shortFormOf,
     isGenericName,
+    TYPE_WORDS,
+    typeFamilyOf,
+    typeConflictOf,
+    sameSiteOf,
     SHORT_FORM_MAX_DIST,
+    WEAK_MATCH_MAX_DIST,
     COORD_DRIFT_MAX_DIST,
     isInstitution,
     exclusionKindOf,
@@ -767,10 +868,13 @@
         penFn,
       }));
 
-      // 先按综合分（含类型偏好）排；同分再看距离
-      scored.sort((a, b) =>
-        (b.score - a.score) !== 0 ? (b.score - a.score) : (a.dist - b.dist)
-      );
+      // #29：先按 tier（exact 3 > 同址强证据 2 > 短名 1 > 地名兜底/其余 0），
+      //   同档再按综合分（含类型偏好），同分看距离。冲突点 tier=-1 排最后且不接受。
+      scored.sort((a, b) => {
+        if (a.tier !== b.tier) return b.tier - a.tier;
+        if ((b.score - a.score) !== 0) return b.score - a.score;
+        return a.dist - b.dist;
+      });
 
       // 排查用：把候选按次序抄一份出来（纯数据，无引用），
       // 用来回答"本体到底在不在候选里、是第几名、为什么输"。
@@ -797,6 +901,10 @@
             shortForm: !!sc.shortForm,
             shortFormCore: sc.shortFormCore || null,
             generic: !!sc.generic,
+            // #29：类型词族、冲突、同址强证据、地名兜底与排序档位
+            sameSite: !!sc.sameSite, typeConflict: !!sc.typeConflict,
+            typeFamily: sc.typeFamily || { target: null, cand: null },
+            weakMatch: !!sc.weakMatch, tier: sc.tier,
             excludeKind: sc.excludeKind || '',
             facility: sc.facility,
             facilityWord: sc.facilityWord,
@@ -813,9 +921,15 @@
         // #14-S2：设施点（本体+游客服务中心/警务站/停车场…）永不当结果：
         // 这类候选只在“本体不存在”时才会赢，宁可未匹配也不认。
         if (s.excludeKind) continue;
+        // #29：类型冲突点（十里庙清真寺 vs 十里庙遗址）永不当结果。
+        if (s.typeConflict) continue;
         // #27：纯通名候选不作名称证据（教堂 120 m 不能因为 sim 0.727 过 0.7 闸门就选中）。
         if (s.generic) continue;
+        // #29：同址强证据（十里庙遗址文化园 ⊃ 十里庙遗址）在短名前接受，距离同 10 km 口径。
+        if (s.sameSite && Number.isFinite(s.dist) && s.dist <= COORD_DRIFT_MAX_DIST) return s;
         if (s.shortForm && Number.isFinite(s.dist) && s.dist <= SHORT_FORM_MAX_DIST) return s;
+        // #29：地名兜底只在本体类候选都不可用时兜底（tier 排序已保证最低优先级）。
+        if (s.weakMatch) { if (Number.isFinite(s.dist) && s.dist <= WEAK_MATCH_MAX_DIST) return s; continue; }
         if (passes(s.sim, s.dist)) return s;
       }
       return null;

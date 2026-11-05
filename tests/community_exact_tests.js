@@ -107,8 +107,9 @@ check('卡片：drift 只在 coordinateDriftKm 非空时渲染',
 check('卡片：exact 候选放宽到 COORD_DRIFT_MAX_DIST（不是写死 10000）',
   /COORD_DRIFT_MAX_DIST/.test(cardSrc) && /hardLimit/.test(cardSrc));
 // #27：排序优先级从「exact 布尔」升级为三档 exact > shortForm > 其余（同档比统一分）。
-check('卡片：exact 候选优先于非同名（#27 三档：exact > shortForm > 其余）',
-  /const tier = exactCand \? 2 : \(candShort \? 1 : 0\)/.test(cardSrc) && /tier > best\.tier/.test(cardSrc));
+// #29：三档升级为四档 exact 3 > 同址强证据 2 > shortForm 1 > 其余 0。
+check('卡片：exact 候选优先于非同名（#29 四档：exact > 同址 > shortForm > 其余）',
+  /const tier = exactCand \? 3 : \(candSame \? 2 : \(candShort \? 1 : 0\)\)/.test(cardSrc) && /tier > best\.tier/.test(cardSrc));
 check('卡片：#24 偏差小字用专用类 hmp-drift-note 且 CSS 为 12px / #707070',
   /hmp-sub-note hmp-drift-note/.test(cardSrc) &&
   /#hmp-opening-card \.hmp-sub-note\.hmp-drift-note \{[^}]*font-size: 12px/.test(cssSrc) &&

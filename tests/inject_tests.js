@@ -765,6 +765,19 @@ function resetDoc() {
       near.notes.length === 0 && !near.text.includes('请核对是否同一处') &&
       !near.text.includes('坐标偏差约'), near.text.slice(0, 200));
 
+    // #29：地名兜底（南阳十里庙 328 m）即使 <3 km 也出距离提示（上游已给 distanceKm=0.3）
+    const weak = await renderNote({
+      coordinateDriftKm: null, matchDist: 328, distanceKm: 0.3,
+      siteName: '十里庙遗址', info: { name: '南阳十里庙', opentimeWeek: '' },
+    });
+    check('地名兜底 328 m：出通用距离提示且带 data-hmp-note="distance"',
+      weak.notes.length === 1 && weak.notes[0].attrs['data-hmp-note'] === 'distance',
+      JSON.stringify(weak.notes.map(n => n.attrs['data-hmp-note'])));
+    check('地名兜底 328 m：文案为「约 0.3 公里，请核对是否同一处」',
+      weak.text.includes('该地点距点位约 0.3 公里，请核对是否同一处'), weak.text.slice(0, 240));
+    check('地名兜底 328 m：不出偏差文案',
+      !weak.text.includes('同名地点，坐标偏差约'), weak.text.slice(0, 240));
+
     const both = await renderNote({ coordinateDriftKm: 6.7, matchDist: 6672, distanceKm: 6.7 });
     check('两条都有值时只出一条（exact 优先）',
       both.notes.length === 1 && both.notes[0].attrs['data-hmp-note'] === 'drift',

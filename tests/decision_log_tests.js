@@ -138,8 +138,9 @@ const log = global.window.HMP.decisionLog;
     v2.routes.name.candidates.map(c => c.score).join());
   // #24：契约加 exactName（schema 仍为 2）；coordinateDriftKm 仅在 3–10 km 同名命中时出现，属可选字段
   // #27：契约再加 shortForm/shortFormCore；旧日志没有这两个字段，读取侧按 false/null 处理
-  const KEYS = ['name', 'sim', 'simAdj', 'dist', 'distScore', 'typeRank', 'subPen', 'pen', 'source', 'score', 'exactName', 'shortForm', 'shortFormCore'];
-  check('v2：候选必备字段集为契约 13 项（+ #24 exactName、#27 shortForm/shortFormCore，可选 coordinateDriftKm）',
+  // #29：契约再加 typeFamily/typeConflict（旧日志按 null/false 读）
+  const KEYS = ['name', 'sim', 'simAdj', 'dist', 'distScore', 'typeRank', 'subPen', 'pen', 'source', 'score', 'exactName', 'shortForm', 'shortFormCore', 'typeFamily', 'typeConflict'];
+  check('v2：候选必备字段集为契约 15 项（+ #24 exactName、#27 shortForm/shortFormCore、#29 typeFamily/typeConflict，可选 coordinateDriftKm）',
     v2.routes.name.candidates.every(c => KEYS.every(k => k in c)) &&
     v2.routes.name.candidates.every(c => Object.keys(c).length >= KEYS.length && Object.keys(c).length <= KEYS.length + 1),
     JSON.stringify(Object.keys(v2.routes.name.candidates[0])));

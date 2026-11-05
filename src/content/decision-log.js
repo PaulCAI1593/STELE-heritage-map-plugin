@@ -116,6 +116,12 @@
       // #27：短名后缀（候选是目标名尾部的简称，如 天主堂 ← 靳岗天主教堂）
       shortForm: c.shortForm === true,
       shortFormCore: c.shortForm === true && c.shortFormCore != null ? clipName(c.shortFormCore) : null,
+      // #29：类型词族与冲突标记（旧日志没有这两项，读取侧按 null/false）
+      typeFamily: c.typeFamily && typeof c.typeFamily === 'object'
+        ? { target: c.typeFamily.target == null ? null : String(c.typeFamily.target),
+            cand: c.typeFamily.cand == null ? null : String(c.typeFamily.cand) }
+        : null,
+      typeConflict: c.typeConflict === true,
       ...(c.coordinateDriftKm == null ? {} : { coordinateDriftKm: num(c.coordinateDriftKm) }),
     };
   }
@@ -189,6 +195,8 @@
         // #27：短名后缀（旧日志没有这两个字段，读取侧按 false/null 处理）
         shortForm: fin.shortForm === true,
         shortFormCore: fin.shortForm === true && fin.shortFormCore != null ? clipName(fin.shortFormCore) : null,
+        // #29：地名兜底（弱证据）命中
+        weakMatch: fin.weakMatch === true,
         ...(Number.isFinite(fin.coordinateDriftKm) && fin.coordinateDriftKm > 0 && fin.coordinateDriftKm <= 10
           ? { coordinateDriftKm: Math.round(fin.coordinateDriftKm * 10) / 10 } : {}),
         // #26：远距离采用的通用距离（公里，1 位小数；旧日志无此字段照样可读）

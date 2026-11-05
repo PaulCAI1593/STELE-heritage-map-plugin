@@ -1594,13 +1594,17 @@
             // 0.7 闸门，但规则已严格限定「后缀 + 前缀 1–4 字 + 剥通名后仍有专名」，按短名放行。
             const candShort = (p.src === 'name' && window.HMP.matcher.shortFormOf)
               ? window.HMP.matcher.shortFormOf(poi.name, cand.name) : null;
+            // #29：类型词冲突与同址强证据来自名称路的 dump；冲突点永不带进统一池。
+            //   只对名称路生效：地址/坐标路靠门牌与位置，不受名字类型影响。
+            if (p.src === 'name' && cd.typeConflict) continue;
+            const candSame = p.src === 'name' && !!cd.sameSite;
             // 既有闸门不变（阈值不动）：远同名/借名/子单元、借名住宅、非文物类坐标。
             if (p.src === 'name') {
               // #27：纯通名候选（教堂/礼拜堂/城墙/博物院/广场…）不作名称证据。
               if (window.HMP.matcher.isGenericName &&
                   window.HMP.matcher.isGenericName(poi.name, cand.name)) continue;
-              if (!window.HMP.matcher.passes(cd.sim, cd.dist) && !candShort) continue;
-              const hardLimit = (exactCand || candShort)
+              if (!window.HMP.matcher.passes(cd.sim, cd.dist) && !candShort && !candSame) continue;
+              const hardLimit = (exactCand || candShort || candSame)
                 ? (window.HMP.matcher.COORD_DRIFT_MAX_DIST || 10000) : distLimit;
               if (Number.isFinite(cd.dist) && cd.dist > hardLimit) continue;
               if (borrowedNamePenalty(poi.name, cand) < 1) continue;
@@ -1626,12 +1630,12 @@
             // 存在 3–10 km 的同名候选，exact 仍会压过更近的正确实体。保留现状是为了
             // 「玄妙观 6.7 km 同名本体不被 614 m 的借用名商户/社区点抢走」；
             // 是否改成「近邻实体可优先于远同名」需真实误配样本积累后再定，勿随手改。
-            // #27 选择优先级：exact > shortForm > 其余（同档比统一分）。
-            const tier = exactCand ? 2 : (candShort ? 1 : 0);
+            // #29 选择优先级：exact 3 > 同址强证据 2 > shortForm 1 > 地名兜底/其余 0（同档比统一分）。
+            const tier = exactCand ? 3 : (candSame ? 2 : (candShort ? 1 : 0));
             const better = !best
               || tier > best.tier
               || (tier === best.tier && sc.score > best.sc.score);
-            if (better) best = { src: p.src, sc, exact: exactCand, short: !!candShort, tier };
+            if (better) best = { src: p.src, sc, exact: exactCand, same: candSame, short: !!candShort, tier };
           }
         }
         return best;
@@ -1643,10 +1647,14 @@
         // #24：3–10 km 的完全同名点采用，并记坐标偏差（1 位小数）。
         const driftKm = (unified.exact && Number.isFinite(sc.dist) && sc.dist > NAME_MAX_DIST)
           ? Math.round(sc.dist / 100) / 10 : null;
-        const distanceKm = distanceKmOf(sc.dist);
+        // #29：地名兜底（候选无类型词、名字里含目标地名核心）一律给距离提示，即使 <3 km。
+        const weakMatch = !!sc.weakMatch;
+        const distanceKm = weakMatch && Number.isFinite(sc.dist)
+          ? Math.round(sc.dist / 100) / 10 : distanceKmOf(sc.dist);
         const level = (driftKm
           ? '同名地点（坐标偏差约 ' + driftKm.toFixed(1) + ' 公里）· '
-          : '') + '三路统一评分（来源 ' + srcLabel + '，score ' +
+          : '') + (weakMatch ? '地名兜底（弱证据）· ' : '') +
+          '三路统一评分（来源 ' + srcLabel + '，score ' +
           sc.score.toFixed(3) + '，simAdj ' + sc.simAdj.toFixed(3) + '）';
         why.push(level + '：sim ' + sc.sim.toFixed(2) + '×缺席 ' + sc.absence.toFixed(2) +
           '（前缀-' + sc.prefixLen + '/后缀-' + sc.suffixLen + '字）×类型 ' +
@@ -1658,7 +1666,9 @@
             source: unified.src, score: sc.score, sim: sc.sim, simAdj: sc.simAdj,
             absence: sc.absence, prefixLen: sc.prefixLen, suffixLen: sc.suffixLen,
             sourcePrior: sc.sourcePrior, mult: sc.mult, subPen: sc.subPen, pen: sc.pen,
-            core: sc.core || null,
+            core: sc.core || null, tier: unified.tier,
+            sameSite: !!sc.sameSite, typeConflict: !!sc.typeConflict,
+            typeFamily: sc.typeFamily || null, weakMatch,
           };
           diag.decisionWhy = diag.decisionWhy || {};
           diag.decisionWhy[provider] = why.slice();
@@ -1673,6 +1683,9 @@
             exactName: !!unified.exact, coordinateDriftKm: driftKm, distanceKm,
             // #27：短名后缀（靳岗天主教堂 → 天主堂），进卡片结论与决策日志
             shortForm: !!sc.shortForm, shortFormCore: sc.shortForm ? (sc.shortFormCore || null) : null,
+            // #29：同址强证据 / 地名兜底 / 类型词族，进卡片结论与决策日志
+            sameSite: !!sc.sameSite, weakMatch,
+            typeConflict: !!sc.typeConflict, typeFamily: sc.typeFamily || null,
           },
           info: api && typeof api.extract === 'function' ? api.extract(sc.poi) : undefined,
           provider,
@@ -2085,6 +2098,8 @@
     if (m && m.shortForm) {
       why.push('短名后缀：' + (finalPoi || '?') + '（专名 ' + (m.shortFormCore || '?') + '）');
     }
+    // #29：地名兜底（无类型词、只命中地名核心）是弱证据，卡片必须标距离
+    if (m && m.weakMatch) why.push('地名兜底：' + (finalPoi || '?') + '（弱证据，已标距离）');
     if (diag && diag.fallbackFrom) why.push('已从' + diag.fallbackFrom + '回退到' + provider);
     // #14-S：统一评分的各步权重/来源写进 why[]，供决策日志解释。
     if (diag && diag.decisionWhy && Array.isArray(diag.decisionWhy[provider])) {
@@ -2121,10 +2136,14 @@
         exactName: !!(m && m.exactName),
         coordinateDriftKm: (m && m.coordinateDriftKm != null) ? m.coordinateDriftKm : null,
         // #26：非 exact 的远距离采用也记实际距离（exact 时与 drift 同值）
-        coordinateDistanceKm: distanceKmOf(m && m.dist),
+        // #29：地名兜底即使 <3 km 也记（卡片一律给距离提示）
+        coordinateDistanceKm: (m && m.weakMatch && Number.isFinite(m.dist))
+          ? Math.round(m.dist / 100) / 10 : distanceKmOf(m && m.dist),
         // #27：短名后缀（候选是 STELE 名尾部简称）
         shortForm: !!(m && m.shortForm),
         shortFormCore: (m && m.shortForm && m.shortFormCore != null) ? m.shortFormCore : null,
+        // #29：地名兜底（弱证据）
+        weakMatch: !!(m && m.weakMatch),
         why,
       } : null,
       // 兼容字段：旧版阅读习惯/旧测试断言仍能看到时间、点位、家、选用路
