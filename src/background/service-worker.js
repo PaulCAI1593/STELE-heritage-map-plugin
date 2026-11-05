@@ -42,11 +42,20 @@ console.log('[HMP] service worker 已启动');
 // 高德接口带 Access-Control-Allow-Origin 所以直连能通，百度接口不带 → 被拦。
 // service worker 属于扩展自身来源，配合 host_permissions 可正常跨域，
 // 因此所有地图接口请求统一经这里转发。
+const HTTP_TIMEOUT_MS = 2500;
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.type !== 'hmp-http' || typeof msg.url !== 'string') return;
-  fetch(msg.url, { credentials: 'omit' })
+  // SW 侧也加超时：内容脚本那边虽然有超时，但 SW 若挂住会占着消息通道，
+  // 这里主动 abort 让失败尽快返回，内容脚本仍按"超时→重试 1 次"处理。
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), HTTP_TIMEOUT_MS) : null;
+  fetch(msg.url, { credentials: 'omit', signal: ctrl ? ctrl.signal : undefined })
     .then(r => r.text().then(text => ({ ok: true, status: r.status, text })))
-    .catch(e => ({ ok: false, error: String((e && e.message) || e) }))
-    .then(sendResponse);
+    .catch(e => {
+      const aborted = ctrl && ctrl.signal && ctrl.signal.aborted;
+      return { ok: false, timeout: !!aborted, error: String((e && e.message) || e) };
+    })
+    .then(v => { if (timer) clearTimeout(timer); sendResponse(v); });
   return true;   // 异步响应：保持消息通道打开
 });

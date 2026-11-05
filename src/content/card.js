@@ -153,6 +153,40 @@
   }
 
   /**
+   * 失败原因分类：'timeout' | 'rejected' | 'no-candidates' | null。
+   *
+   * 三种"没结果"对用户的含义完全不同，不能都写成"未找到"：
+   *   · timeout       —— 请求超时（已重试 1 次），网络问题，重开可能就好
+   *   · rejected      —— 地图上**有**候选，但没有一个通过校验（不是没收录）
+   *   · no-candidates —— 三路检索确实没有返回候选
+   * 依据 runProvider 写入的 diag（timeouts / providerNotes）。
+   */
+  function classifyFailure(diag, provider) {
+    if (!diag) return null;
+    const note = (diag.providerNotes && provider && diag.providerNotes[provider]) || '';
+    if ((diag.timeouts && diag.timeouts[provider]) || note.indexOf('超时') >= 0) {
+      return 'timeout';
+    }
+    if (note.indexOf('未通过校验') >= 0) return 'rejected';
+    if (note.indexOf('三路均未搜到候选') >= 0) return 'no-candidates';
+    return null;
+  }
+
+  /** 失败态文案：按 failureKind 分开写，避免把"超时"说成"未收录"。 */
+  function missingNote(failureKind) {
+    if (failureKind === 'timeout') {
+      return '请求超时（已重试 1 次），暂未取得地图数据；网络恢复后重新打开该点位即可。';
+    }
+    if (failureKind === 'rejected') {
+      return '地图上有候选点位，但名称/地址/坐标都没有通过校验，未确认是同一处，暂不展示。';
+    }
+    if (failureKind === 'no-candidates') {
+      return '三路检索均未搜到候选，可能是县区级或未定级文物未被收录。';
+    }
+    return '暂未在地图数据中找到该点位，可能是县区级或未定级文物未被收录。';
+  }
+
+  /**
    * 单点位卡片。
    * state.kind: 'loading' | 'no-config' | 'error' | 'not-found' | 'found'
    *
@@ -171,7 +205,7 @@
     }
     if (state.kind === 'not-found') {
       return buildSection(state, [
-        buildNote('暂未在地图数据中找到该点位，可能是县区级或未定级文物未被收录。'),
+        buildNote(missingNote(state.failureKind)),
         buildFallbackLinks(state.amapSearchUrl, state.baiduSearchUrl),
       ]);
     }
@@ -1187,24 +1221,37 @@
       // 记录这一家失败/无果的**具体**原因，供卡片上说明"为什么回退"。
       // 否则只能笼统说"未返回结果"，无法区分"请求报错""没搜到""搜到但没通过校验"。
       const why = [];
+      // 记录这一家是否发生过"请求超时"：超时与"没搜到"对用户含义不同，
+      // 卡片文案必须分开（见 classifyFailure / missingNote）。
+      const timeouts = {};
       if (useName) { try { byName = await searchByName(cfg, provider, poi); } catch (e) {
         why.push('名称检索失败：' + e.message);
+        if (e && e.code === 'HMP_TIMEOUT') timeouts.name = true;
         console.warn('[HMP]', provider, '名称检索异常：', e.message);
       } }
       if (useAddr) { try { byAddr = await searchByAddress(cfg, provider, poi); } catch (e) {
         why.push('地址检索失败：' + e.message);
+        if (e && e.code === 'HMP_TIMEOUT') timeouts.address = true;
         console.warn('[HMP]', provider, '地址检索异常：', e.message);
       } }
       if (useGeo) { try { byGeo = await searchNearby(cfg, provider, poi); } catch (e) {
         why.push('坐标检索失败：' + e.message);
+        if (e && e.code === 'HMP_TIMEOUT') timeouts.geo = true;
         console.warn('[HMP]', provider, '坐标检索异常：', e.message);
       } }
       if (diag) {
         const got = [byName && '名称', byAddr && '地址', byGeo && '坐标'].filter(Boolean);
         diag.providerNotes = diag.providerNotes || {};
-        diag.providerNotes[provider] = why.length
-          ? why.join('；')
-          : (got.length ? '有' + got.join('/') + '候选但未通过校验' : '三路均未搜到候选');
+        diag.timeouts = diag.timeouts || {};
+        if (Object.keys(timeouts).length) {
+          // 超时优先：网络问题 ≠ 地图上没有这个点位
+          diag.timeouts[provider] = true;
+          diag.providerNotes[provider] = '请求超时（已重试 1 次）';
+        } else {
+          diag.providerNotes[provider] = why.length
+            ? why.join('；')
+            : (got.length ? '有' + got.join('/') + '候选但未通过校验' : '三路均未搜到候选');
+        }
       }
 
       const idOf = r => r && r.matched && r.matched.poi &&
@@ -1655,11 +1702,13 @@
       renderResult(poi, payload);
     } else {
       const missProvider = diag.usedProvider || cfg.defaultProvider;
+      // 失败也分三种：超时 / 有候选但未通过校验 / 三路都没候选（见 missingNote）
+      const failureKind = classifyFailure(diag, diag.usedProvider);
+      const missPayload = { matched: null, provider: missProvider, fallbackNote, failureKind };
       await window.HMP.cache.set(
-        missProvider, poi.name, poi.adminLast || '',
-        { matched: null, provider: missProvider, fallbackNote }
+        missProvider, poi.name, poi.adminLast || '', missPayload
       );
-      renderResult(poi, { matched: null, provider: missProvider, fallbackNote });
+      renderResult(poi, missPayload);
     }
   }
 
@@ -1696,6 +1745,7 @@
         provider: cacheData.provider,
         providerLabel: cacheData.provider === 'amap' ? '高德地图' : '百度地图',
         fallbackNote: cacheData.fallbackNote || '',
+        failureKind: cacheData.failureKind || null,
         amapSearchUrl, baiduSearchUrl,
         featureType: poi.featureType
       });
@@ -1993,6 +2043,9 @@
     pickProviders,
     borrowedNamePenalty,
     houseNoPenalty,
+    // 失败原因分类与文案（条目 1：区分超时 / 未通过校验 / 无候选）
+    classifyFailure,
+    missingNote,
     findContainer,
     panelGone,
     removeCard,

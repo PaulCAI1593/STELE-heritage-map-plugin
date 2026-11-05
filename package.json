@@ -4,7 +4,7 @@
   "private": true,
   "description": "在 STELE 中国遗产地图的文保点位详情页，叠加高德/百度地图的开放时间、票价与地址（开发期工具与测试；扩展本体在 src/，无需构建）",
   "scripts": {
-    "test": "npm run test:match && npm run test:baidu && npm run test:fields && npm run test:geo && npm run test:renamed && npm run test:group && npm run test:combine && npm run test:quality && npm run test:api && npm run test:regression && npm run test:inject && npm run test:switch && npm run test:smoke",
+    "test": "npm run test:match && npm run test:http && npm run test:baidu && npm run test:fields && npm run test:geo && npm run test:renamed && npm run test:group && npm run test:combine && npm run test:quality && npm run test:api && npm run test:regression && npm run test:inject && npm run test:switch && npm run test:smoke",
     "test:match": "node tests/run_tests.js",
     "test:geo": "node tests/geo_tests.js",
     "test:renamed": "node tests/renamed_tests.js",
@@ -21,7 +21,8 @@
     "test:quality": "node tests/quality_tests.js",
     "test:combine": "node tests/combine_tests.js",
     "test:switch": "node tests/switch_tests.js",
-    "test:baidu": "node tests/baidu_parity_tests.js"
+    "test:baidu": "node tests/baidu_parity_tests.js",
+    "test:http": "node tests/http_timeout_tests.js"
   },
   "engines": {
     "node": ">=14"
