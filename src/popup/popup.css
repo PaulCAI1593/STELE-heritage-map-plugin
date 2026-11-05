@@ -1,161 +1,230 @@
-/* popup/popup.css */
-:root {
-  --primary: #EC7063;
-  --primary-dark: #C0392B;
-  --text: #222;
-  --text-muted: #777;
-  --border: #e0e0e0;
-  --bg: #fafafa;
-}
+:root{--font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
 
-* { box-sizing: border-box; }
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 
-body {
-  margin: 0;
-  padding: 0;
-  width: 360px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: var(--text);
-  background: var(--bg);
-  font-size: 13px;
-}
+/* ---- 弹窗骨架（两主题完全一致，只换变量与材质层） ---- */
+.popup{width:100%;background-color:var(--hmp-surface);border-top:1px solid var(--hmp-border);
+  border-bottom:1px solid var(--hmp-border);overflow:hidden;border-radius:var(--hmp-r);
+  box-shadow:var(--hmp-shadow)}
+.ph{display:flex;align-items:flex-start;gap:10px;padding:5px 12px 4px;position:relative}
+.ph-t{flex:1 1 auto;min-width:0}
+.ph h1{margin:0;font-size:16px;font-weight:600;color:var(--hmp-primary);display:flex;align-items:center;gap:7px}
+.ph h1::before{content:"";flex:0 0 auto;width:14px;height:14px;border-radius:1px;background:var(--hmp-primary);
+  box-shadow:inset 0 0 0 2px var(--hmp-surface)}
+.ph .sub{margin:2px 0 0;font-size:12px;line-height:1.45;color:var(--hmp-muted)}
 
-.container {
-  padding: 16px;
-}
+/* 启用开关（label 整块可点，36px） */
+.tgl{display:flex;align-items:center;gap:7px;min-height:36px;padding:0 2px;cursor:pointer;flex:0 0 auto}
+.tgl input{position:absolute;opacity:0;width:0;height:0}
+.tgl .trk{width:36px;height:20px;border-radius:10px;background:var(--hmp-trk);position:relative;transition:background .15s}
+.tgl .trk::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+.tgl input:checked + .trk{background:var(--hmp-primary)}
+.tgl input:checked + .trk::after{transform:translateX(16px)}
+.tgl input:focus-visible + .trk{outline:2px solid var(--hmp-link);outline-offset:2px}
+.tgl .tlb{font-size:13px;color:var(--hmp-text)}
 
-h1 {
-  font-size: 16px;
-  margin: 0 0 4px;
-  color: var(--primary-dark);
-}
+/* 右上角主题开关：单段 32px 高，选中态＝底色＋描边＋字重 */
+.seg{display:flex;flex:0 0 auto;border:1px solid var(--hmp-border);border-radius:var(--hmp-r-sm);overflow:hidden;
+  background:var(--hmp-surface-2)}
+.seg-b{min-width:44px;min-height:32px;padding:0 8px;font:600 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--hmp-muted);
+  background:transparent;border:0;border-left:1px solid var(--hmp-border);cursor:pointer;transition:background .15s,color .15s}
+.seg-b:first-child{border-left:0}
+.seg-b:hover{color:var(--hmp-text)}
+.seg-b[aria-pressed="true"]{background:var(--hmp-primary);color:#fff;font-weight:700;
+  box-shadow:inset 0 0 0 2px var(--hmp-surface),inset 0 0 0 3px var(--hmp-primary)}
+.seg-b:focus-visible{outline:2px solid var(--hmp-link);outline-offset:-2px}
 
-.subtitle {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin: 0 0 14px;
-}
+/* 常驻状态带（三合一） */
+.band{display:flex;gap:9px;align-items:flex-start;margin:0 12px 4px;padding:5px 10px;
+  border:1px solid var(--hmp-idle-line);border-radius:var(--hmp-r-sm);background:var(--hmp-idle-bg);color:var(--hmp-idle-ink)}
+.band .ic{flex:0 0 auto;width:16px;height:16px;margin-top:1px}
+.band-t{flex:1 1 auto;min-width:0;font-size:13px;font-weight:600;line-height:1.4}
+.band-b{display:block;margin-top:2px;font-size:12.5px;font-weight:400;line-height:1.45}
+.band-m{flex:0 0 auto;min-width:88px;font-size:12px;line-height:1.4;color:var(--hmp-muted);text-align:right;max-width:44%}
+.b-ok{background:var(--hmp-ok-bg);border-color:var(--hmp-ok-line);color:var(--hmp-ok-ink)}
+.b-err{background:var(--hmp-err-bg);border-color:var(--hmp-err-line);color:var(--hmp-err-ink)}
+.b-warn{background:var(--hmp-warn-bg);border-color:var(--hmp-warn-line);color:var(--hmp-warn-ink)}
+.b-info,.b-prog{background:var(--hmp-info-bg);border-color:var(--hmp-info-line);color:var(--hmp-info-ink)}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.meta{margin:0 12px 8px;font-size:12px;color:var(--hmp-muted)}
 
-.row { margin-bottom: 12px; }
-.row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+/* 表单 */
+.fld{padding:0 12px;margin-bottom:5px}
+.lbl{display:flex;align-items:center;gap:6px;margin-bottom:3px;min-height:20px}
+.lbl label{font-size:13px;font-weight:600}
+.tag{font-size:12px;line-height:1;padding:3px 6px;border-radius:var(--hmp-r-pill)}
+.tag-a{background:var(--hmp-tag-a-bg);color:var(--hmp-tag-a-ink)}
+.tag-b{background:var(--hmp-tag-b-bg);color:var(--hmp-tag-b-ink)}
+.inp-row{display:flex;gap:6px;align-items:stretch}
+.inp-row input{flex:1 1 auto;min-width:0;height:32px;padding:0 9px;font:12.5px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  color:var(--hmp-text);background:var(--hmp-input-bg);border:1px solid var(--hmp-border);border-radius:var(--hmp-r-sm)}
+.inp-row input::placeholder{color:var(--hmp-placeholder)}
+.inp-row input:focus-visible{outline:2px solid var(--hmp-link);outline-offset:-1px}
+.hint{margin:3px 0 0;font-size:12px;line-height:1.5;color:var(--hmp-muted)}
+.hrow{display:flex;gap:8px;align-items:center;margin-top:2px}
+.hrow .hint{margin:0;flex:1 1 auto;min-width:0}
+.lnk{flex:0 0 auto;display:inline-flex;align-items:center;min-height:32px;font-size:12.5px;
+  color:var(--hmp-link);text-decoration:none;white-space:nowrap}
+.lnk:hover{text-decoration:underline}
+.lnk:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px;border-radius:2px}
 
-.section { margin-bottom: 14px; }
-.section h2 {
-  font-size: 13px;
-  margin: 0 0 6px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+/* 高级折叠 */
+.adv{margin:0 12px 4px;border:1px solid var(--hmp-border);border-radius:var(--hmp-r-sm);
+  background:var(--hmp-surface-2);box-shadow:var(--hmp-shadow-sm)}
+.adv summary{display:flex;align-items:center;min-height:32px;padding:5px 10px;font-size:13px;
+  font-weight:600;cursor:pointer;list-style:none}
+.adv summary::-webkit-details-marker{display:none}
+.adv summary::after{content:"＋";margin-left:auto;color:var(--hmp-muted);font-size:13px}
+.adv[open] summary::after{content:"−"}
+.adv summary:focus-visible{outline:2px solid var(--hmp-link);outline-offset:-2px}
+.adv .body{padding:6px 10px 10px}
+.adv .fld{padding:0;margin-bottom:10px}
+.adv select{width:100%;height:32px;padding:0 8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--hmp-text);
+  background:var(--hmp-input-bg);border:1px solid var(--hmp-border);border-radius:var(--hmp-r-sm)}
+.adv select:focus-visible{outline:2px solid var(--hmp-link);outline-offset:-1px}
 
-.provider-tag {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 8px;
-  font-weight: normal;
-}
-.provider-tag.amap { background: #e7f3ff; color: #1976d2; }
-.provider-tag.baidu { background: #fff3e0; color: #e65100; }
+/* 操作 */
+.acts{display:flex;gap:8px;padding:0 12px;margin-bottom:2px}
+.btn{flex:1 1 0;min-height:32px;padding:7px 10px;font:600 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;border-radius:var(--hmp-r-sm);
+  border:1px solid transparent;cursor:pointer;transition:background .15s}
+.btn.show{flex:0 0 auto;min-height:32px;padding:7px 10px}
+.btn:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px}
+.btn.primary{background:var(--hmp-primary);color:#fff}
+.btn.primary:hover{background:var(--hmp-primary-h)}
+.btn.sec{background:var(--hmp-input-bg);color:var(--hmp-text);border-color:var(--hmp-border)}
+.btn.sec:hover{background:var(--hmp-hover)}
+.btn[disabled]{opacity:.72;cursor:default}
+.btn.busy{background:var(--hmp-input-bg);color:var(--hmp-info-ink);border-color:var(--hmp-info-line)}
 
-input[type="password"],
-select {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 12px;
-  background: white;
-}
-input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+/* 测试结果：细压线 */
+.trs{margin:0 12px 4px;border-top:1px solid var(--hmp-line-soft);padding-top:4px;
+  box-shadow:inset 0 1px 0 var(--hmp-hi)}
+.trs .tr{display:flex;gap:7px;align-items:flex-start;font-size:12.5px;line-height:1.45;padding:1px 0}
+.tr .ic{flex:0 0 auto;width:14px;height:14px;margin-top:2px}
+.tr-ok{color:var(--hmp-ok-ink)}
+.tr-fail{color:var(--hmp-err-ink)}
+.trs .note{font-size:12px;color:var(--hmp-muted);padding:3px 0}
 
-.hint {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin: 4px 0 0;
-  line-height: 1.5;
-}
-.hint a { color: #1976d2; text-decoration: none; }
-.hint a:hover { text-decoration: underline; }
+/* 页脚：版本号 + 检测更新 + 免责声明 */
+.upd{display:flex;align-items:center;gap:8px;margin:6px 12px 4px;min-height:32px}
+.upd-l{flex:1 1 auto;min-width:0;font-size:12px;line-height:1.5}
+.ver{font-weight:700;color:var(--hmp-text);font-variant-numeric:tabular-nums}
+.upd-msg{display:block;color:var(--hmp-muted)}
+.upd-msg.is-new{color:var(--hmp-primary);font-weight:600;text-decoration:underline}
+.upd-msg.is-err{color:var(--hmp-err-ink)}
+.upd-btn{flex:0 0 auto;min-height:32px;min-width:32px;padding:0 6px;font:600 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  color:var(--hmp-primary);background:transparent;border:0;cursor:pointer;text-decoration:underline;
+  text-underline-offset:2px}
+.upd-btn:hover{color:var(--hmp-primary-h)}
+.upd-btn:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px;border-radius:2px}
+.upd-btn[disabled]{color:var(--hmp-muted);cursor:default;text-decoration:none}
+.hmp-foot{margin:0 12px 3px;font-size:12px;line-height:1.4;color:var(--hmp-muted)}
+.popup--foot .hmp-foot{margin-bottom:8px}
 
-.actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 16px;
-}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}*{transition:none!important}}
+@media (max-width:359px){.band{flex-wrap:wrap}.band-m{max-width:100%;text-align:left}}
 
-button {
-  flex: 1;
-  padding: 8px;
-  border: none;
-  border-radius: 4px;
-  background: var(--primary);
-  color: white;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-button:hover { background: var(--primary-dark); }
-button.secondary {
-  background: white;
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-button.secondary:hover { background: #f0f0f0; }
 
-.status {
-  margin-top: 12px;
-  padding: 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  text-align: center;
-  display: none;
+[data-theme="paper"]{
+  --hmp-page:#E7DFCC;
+  --hmp-surface:#F7F2E7; --hmp-surface-2:#FBF7ED; --hmp-input-bg:#FFFDF7;
+  --hmp-text:#2A251E; --hmp-muted:#6B6154; --hmp-placeholder:#6F675B;
+  --hmp-border:#D8CDB6; --hmp-line-soft:#E3DAC6; --hmp-hi:rgba(255,255,255,.75);
+  --hmp-primary:#B23A2E; --hmp-primary-h:#96301F; --hmp-link:#1F5FA8;
+  --hmp-shadow:none; --hmp-shadow-sm:none;
+  --hmp-r:2px; --hmp-r-sm:2px; --hmp-r-pill:2px;
+  --hmp-trk:#CFC3A8; --hmp-hover:#F1EADA;
+  --hmp-ok-ink:#2F6B3A; --hmp-ok-bg:#EDF2E3; --hmp-ok-line:#C7DBBD;
+  --hmp-err-ink:#9E2B1E; --hmp-err-bg:#F8E9E4; --hmp-err-line:#EBCCC4;
+  --hmp-warn-ink:#7A5A12; --hmp-warn-bg:#F7EFD8; --hmp-warn-line:#E7D6AA;
+  --hmp-info-ink:#1F5FA8; --hmp-info-bg:#E9EFF7; --hmp-info-line:#C7D7EC;
+  --hmp-idle-ink:#5E564A; --hmp-idle-bg:#F0EADB; --hmp-idle-line:#D8CDB6;
+  --hmp-tag-a-bg:#E4ECF6; --hmp-tag-a-ink:#1A4F86;
+  --hmp-tag-b-bg:#F6EBDA; --hmp-tag-b-ink:#7A4A10;
 }
-.status.success {
-  display: block;
-  background: #e8f5e9;
-  color: #2e7d32;
-  border: 1px solid #c8e6c9;
+/* 极细纤维纹理：两组 1px 条纹渐变，纯 CSS，无外链图，α≤0.05 以保证对比度读数保守 */
+[data-theme="paper"] .popup{
+  background-image:
+    linear-gradient(94deg, rgba(146,126,92,.05) 0 1px, rgba(146,126,92,0) 1px),
+    linear-gradient(4deg, rgba(146,126,92,.035) 0 1px, rgba(146,126,92,0) 1px),
+    radial-gradient(140% 90% at 12% -10%, rgba(255,255,255,.55), rgba(255,255,255,0) 55%);
+  background-size:3px 3px,4px 4px,100% 100%;
+  background-repeat:repeat,repeat,no-repeat;
 }
-.status.error {
-  display: block;
-  background: #ffebee;
-  color: #c62828;
-  border: 1px solid #ffcdd2;
-}
-/* 测试 Key 结果 */
-.test-result:not(:empty) {
-  margin-top: 10px;
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-}
+[data-theme="paper"] .band-m{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 
-.tr-row {
-  font-size: 12px;
-  line-height: 1.6;
-  padding: 3px 0;
-  word-break: break-all;
+[data-theme="glass"]{
+  --hmp-page:#DCE4EA;
+  --hmp-surface:#EDF2F6; --hmp-surface-2:#F4F8FB; --hmp-input-bg:#FFFFFF;
+  --hmp-text:#16242C; --hmp-muted:#4F626E; --hmp-placeholder:#55656F;
+  --hmp-border:rgba(46,74,92,.26); --hmp-line-soft:rgba(46,74,92,.16);
+  --hmp-hi:rgba(255,255,255,.9);
+  --hmp-primary:#2F6B72; --hmp-primary-h:#24565C; --hmp-link:#17557E;
+  --hmp-shadow:0 10px 26px rgba(30,54,70,.18), inset 0 1px 0 rgba(255,255,255,.95), inset 0 0 0 1px rgba(255,255,255,.5);
+  --hmp-shadow-sm:0 2px 8px rgba(30,54,70,.10), inset 0 1px 0 rgba(255,255,255,.9);
+  --hmp-r:12px; --hmp-r-sm:8px; --hmp-r-pill:999px;
+  --hmp-trk:#9FB3BF; --hmp-hover:#E4ECF2;
+  --hmp-ok-ink:#1F6B45; --hmp-ok-bg:#E6F2EC; --hmp-ok-line:#BCDCCB;
+  --hmp-err-ink:#9B2C22; --hmp-err-bg:#FBEAE7; --hmp-err-line:#EFCBC5;
+  --hmp-warn-ink:#7A5A12; --hmp-warn-bg:#FBF1DC; --hmp-warn-line:#EDDCB2;
+  --hmp-info-ink:#17557E; --hmp-info-bg:#E7F0F7; --hmp-info-line:#C4D9EA;
+  --hmp-idle-ink:#48596A; --hmp-idle-bg:#E9EFF4; --hmp-idle-line:#CBD8E2;
+  --hmp-tag-a-bg:#E4EEF5; --hmp-tag-a-ink:#17557E;
+  --hmp-tag-b-bg:#F2EFE4; --hmp-tag-b-ink:#6E5A16;
 }
-.tr-row.tr-ok { color: #2e7d32; }
-.tr-row.tr-fail { color: #c62828; }
+/* 冷雾玻璃：半透明叠层 + 1px 高光内描边 + 柔和外阴影（高度零影响） */
+[data-theme="glass"] .popup{
+  background-image:linear-gradient(180deg, rgba(255,255,255,.85), rgba(255,255,255,.3));
+  outline:1px solid rgba(46,74,92,.18); outline-offset:-1px;
+}
+[data-theme="glass"] .band{
+  background-image:linear-gradient(180deg, rgba(255,255,255,.7), rgba(255,255,255,.22));
+  outline:1px solid rgba(255,255,255,.9);outline-offset:-1px;
+}
+[data-theme="glass"] .adv{box-shadow:none}
+[data-theme="glass"] .band-m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-weight:600;font-variant-numeric:tabular-nums}
 
-.cache-info {
-  margin-top: 10px;
-  font-size: 11px;
-  color: #999;
-  text-align: center;
-}
+/* ===== 扩展弹窗落地补丁（相对小样只做窗口化与行内测试行） ===== */
+html{background:var(--hmp-page)}
+body{width:380px;max-width:100vw;margin:0;background:var(--hmp-page)}
+@media (min-width:400px){body{width:400px}}
+.popup{min-height:100vh;border-radius:0;border-left:0;border-right:0}
+[hidden]{display:none!important}
 
-/* 有未保存修改时的提示条：这是"填了 Key 却没生效"的常见原因 */
-.dirty-hint {
-  margin-top: 8px;
-  padding: 6px 8px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: #8a6d00;
-  background: #fff8e1;
-  border: 1px solid #ffe08a;
-  border-radius: 4px;
-}
+/* Key 保存态小字（已保存·尾号 / 已修改·未保存 / 未配置） */
+.ks{margin-left:auto;font-size:12px;line-height:1.3;color:var(--hmp-muted);white-space:nowrap}
+.ks.is-dirty{color:var(--hmp-warn-ink);font-weight:600}
+
+/* 行内「测试」按钮（F 方案）：固定在标签行右侧 */
+.test-b{flex:0 0 auto;min-height:32px;padding:0 9px;font-size:12.5px;margin-left:2px}
+
+/* 行内测试结果行（F 方案）：未测/进行中/通过/失败 */
+.res{display:flex;gap:6px;align-items:flex-start;margin:2px 0 0;font-size:12.5px;line-height:1.45;color:var(--hmp-muted)}
+.res .ic{flex:0 0 auto;width:14px;height:14px;margin-top:2px}
+.res[hidden]{display:none!important}
+.res-idle{color:var(--hmp-muted)}
+.res-prog{color:var(--hmp-info-ink)}
+.res-ok{color:var(--hmp-ok-ink)}
+.res-fail{color:var(--hmp-err-ink)}
+.res .res-more{color:var(--hmp-muted);font-weight:400}
+
+/* 未保存提示条（沿用旧元素 id，视觉并入主题） */
+.dirty-hint{color:var(--hmp-warn-ink);margin:3px 12px 4px;padding:4px 8px;border:1px solid var(--hmp-warn-line);
+  border-radius:var(--hmp-r-sm);background:var(--hmp-warn-bg);font-size:12px;line-height:1.45}
+
+/* 页脚：版本 + 检测更新 + 更新可用时的下载行 */
+.upd{flex-wrap:wrap}
+.upd-l{display:flex;flex-direction:column;gap:1px}
+.upd-msg{display:block}
+.upd-msg .mir{color:var(--hmp-muted);font-weight:400}
+.upd-links{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 12px 2px}
+.dl{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 10px;font:600 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  color:#fff;background:var(--hmp-primary);border:1px solid var(--hmp-primary);border-radius:var(--hmp-r-sm);cursor:pointer;text-decoration:none}
+.dl:hover{background:var(--hmp-primary-h)}
+.dl:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px}
+.upd-install{margin:2px 12px 6px;font-size:12px;line-height:1.5;color:var(--hmp-muted)}
+.upd-install b{color:var(--hmp-text);font-weight:600}

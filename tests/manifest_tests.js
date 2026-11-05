@@ -11,8 +11,17 @@ const { check, finish } = env.makeChecker('manifest');
 const M = JSON.parse(fs.readFileSync(path.join(env.SRC, 'manifest.json'), 'utf8'));
 const HP = M.host_permissions || [];
 
-check('host_permissions 只剩两家地图域（负例：stele 已删）',
-  HP.length === 2 && !HP.some(h => h.indexOf('stele.geogv.org') >= 0), JSON.stringify(HP));
+// #04 起 host_permissions = 两家地图域 + 两条更新链路（api.github.com / cdn.jsdelivr.net）
+const ALLOWED_HP = [
+  'https://restapi.amap.com/*',
+  'https://api.map.baidu.com/*',
+  'https://api.github.com/*',
+  'https://cdn.jsdelivr.net/*',
+];
+check('host_permissions 只含地图域与两条更新链路（负例：stele 站点域已删）',
+  HP.every(h => ALLOWED_HP.indexOf(h) >= 0) && !HP.some(h => h.indexOf('stele.geogv.org') >= 0),
+  JSON.stringify(HP));
+check('host_permissions 未新增清单之外的域', HP.length === ALLOWED_HP.length, JSON.stringify(HP));
 check('高德域仍在 host_permissions', HP.indexOf('https://restapi.amap.com/*') >= 0, JSON.stringify(HP));
 check('百度域仍在 host_permissions', HP.indexOf('https://api.map.baidu.com/*') >= 0, JSON.stringify(HP));
 
