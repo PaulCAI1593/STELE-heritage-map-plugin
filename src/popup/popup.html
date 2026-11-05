@@ -44,6 +44,13 @@
     </div>
     <p class="found" id="favFound" aria-live="polite"></p>
 
+    <!-- 撤销条：搜索栏下、分组 chips 上，全宽条（设计 s08；#32c） -->
+    <div class="undo" id="favUndo" role="status" aria-live="polite" hidden>
+      <svg class="ic" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 3.4 3.2 6.4l3 3"></path><path d="M3.2 6.4h5.1a3.4 3.4 0 1 1 0 6.8H6"></path></svg>
+      <span class="undo-t" id="favUndoText"></span>
+      <button class="btn primary" type="button" id="favUndoBtn">撤销</button>
+    </div>
+
     <div class="grps" id="favGroups" role="group" aria-label="分组">
       <div class="grps-row" id="favChips"></div>
       <button class="gmn" type="button" id="favGroupMenuBtn" aria-haspopup="menu" aria-expanded="false">组管理 <svg class="ic" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="3.4" cy="8" r="1.15" fill="currentColor" stroke="none"></circle><circle cx="8" cy="8" r="1.15" fill="currentColor" stroke="none"></circle><circle cx="12.6" cy="8" r="1.15" fill="currentColor" stroke="none"></circle></svg></button>
@@ -82,11 +89,6 @@
         <button class="btn primary" type="button" id="favEmptyGo">去配置 Key</button>
         <button class="btn sec" type="button" id="favEmptyClear" hidden>清空搜索</button>
       </div>
-    </div>
-
-    <div class="undo" id="favUndo" role="status" aria-live="polite" hidden>
-      <span class="undo-t" id="favUndoText"></span>
-      <button class="btn sec" type="button" id="favUndoBtn">撤销</button>
     </div>
 
     <div class="fav-tools">

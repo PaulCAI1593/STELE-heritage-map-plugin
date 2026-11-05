@@ -314,9 +314,10 @@ html,body{width:var(--hmp-popup-w,400px);margin:0;background:var(--hmp-page)}
 .empty-acts{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px}
 .empty-acts .btn{min-width:104px;min-height:40px}
 
-/* 撤销条：独立节点，默认 hidden */
-.undo{display:flex;align-items:center;gap:8px;margin:6px 12px 0;padding:6px 8px 6px 10px;background:var(--hmp-info-bg);border:1px solid var(--hmp-info-line);border-radius:var(--hmp-r-sm);color:var(--hmp-info-ink);font-size:12.5px;line-height:1.4}
-.undo-t{flex:1 1 auto;min-width:0}
-.undo .btn{flex:0 0 auto;min-height:40px;padding:0 12px;font-size:12.5px}
+/* 撤销条：搜索栏下、分组 chips 上，全宽信息带（设计 s08；#32c），默认 hidden */
+.undo{display:flex;align-items:flex-start;gap:9px;margin:4px 12px;padding:6px 10px;background:var(--hmp-info-bg);border:1px solid var(--hmp-info-line);border-radius:var(--hmp-r-sm);color:var(--hmp-info-ink);font-size:13px;line-height:1.4}
+.undo .ic{flex:0 0 auto;width:16px;height:16px;margin-top:1px}
+.undo-t{flex:1 1 auto;min-width:0;font-size:13px;font-weight:600;line-height:1.4}
+.undo .btn{flex:0 0 auto;align-self:center;min-height:40px;padding:0 12px;font-size:12.5px}
 .fav-tools{display:flex;justify-content:flex-end;padding:6px 12px 0}
 .fav-tools .btn{flex:0 0 auto;min-height:40px;padding:0 12px;font-size:12.5px}

@@ -32,6 +32,14 @@ check('popup.html：收藏页有搜索、范围 radiogroup、列表、撤销、�
   /id="favUndo"[^>]*hidden/.test(html) &&
   /id="favExport"/.test(html));
 
+check('popup.html：撤销条位于搜索栏下、分组 chips 上（#32c，设计 s08）',
+  html.indexOf('id="favFound"') >= 0 &&
+  html.indexOf('id="favFound"') < html.indexOf('id="favUndo"') &&
+  html.indexOf('id="favUndo"') < html.indexOf('id="favChips"') &&
+  html.indexOf('id="favUndo"') < html.indexOf('id="favList"') &&
+  /class="undo"[^>]*id="favUndo"/.test(html) &&
+  /id="favUndoBtn"[^>]*>撤销</.test(html));
+
 check('popup.html：三种空态与提示带都有独立节点',
   /id="favEmptyTitle"/.test(html) && /id="favEmptyBody"/.test(html) &&
   /id="favEmptyGo"/.test(html) && /id="favEmptyClear"/.test(html) &&
@@ -75,6 +83,14 @@ check('popup.css：触控点击区 ≥40、主题开关仍 44×32',
   /\.flink[^{]*\{[^}]*min-height:\s*40px/.test(css) &&
   /\.btn[^{]*\{[^}]*min-height:\s*40px/.test(css) &&
   /\.seg-b[^{]*\{[^}]*width:\s*44px[^}]*height:\s*32px/.test(css));
+
+check('popup.css：撤销条为全宽信息带（s08 口径，#32c）',
+  /\.undo\s*\{[^}]*background:\s*var\(--hmp-info-bg\)/.test(css) &&
+  /\.undo\s*\{[^}]*margin:\s*4px 12px/.test(css) &&
+  /\.undo\s*\{[^}]*padding:\s*6px 10px/.test(css) &&
+  /\.undo \.ic\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/.test(css) &&
+  /\.undo-t\s*\{[^}]*font-weight:\s*600/.test(css) &&
+  /\.undo \.btn\s*\{[^}]*align-self:\s*center[^}]*min-height:\s*40px/.test(css));
 
 check('popup.js：长名称单行省略由 JS 补 title（不是只靠 CSS）',
   /\.fname/.test(css) && /text-overflow:\s*ellipsis/.test(css) &&

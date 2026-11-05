@@ -41,6 +41,9 @@ const lib = () => chrome.storage.local._store[KEY] || {};
     dup.ok === false && dup.reason === 'duplicate' && dup.groupName === '未分组' &&
     lib().items.length === 1 && lib().items[0].name === '故宫');
 
+  // #32c：同毫秒 savedAt 会让「最新在前」偶发失败（相等键排序保留插入序），先跨出毫秒边界
+  const t0 = Date.now();
+  while (Date.now() === t0) { /* 等到下一个毫秒 */ }
   await S.add({ steleId: 'a2', name: '颐和园' });
   const r2 = await S.read();
   check('items 按 savedAt 倒序（最新在前）', r2.items[0].steleId === 'a2' && r2.items[1].steleId === 'a1');
