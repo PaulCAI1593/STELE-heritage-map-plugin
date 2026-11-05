@@ -159,5 +159,65 @@ check('#22b C 段 forbiddenPicks 命中 → 失败（防商户/机关/行政点�
   fRun.code === 1 && fRes.C[0] && !fRes.C[0].verdict.ok && /选中禁止点/.test(fRes.C[0].verdict.why),
   'exit=' + fRun.code + ' verdict=' + JSON.stringify(fRes.C[0] && fRes.C[0].verdict));
 
+// #27：expected 写成具体名称时必须真选到该点（C05 用；不能只看"选了个非排除点"）。
+const nameCases = JSON.parse(fs.readFileSync(CASES, 'utf8'));
+nameCases.C = [{
+  id: 'CN1', steleName: '靳岗天主教堂', expected: '天主堂', route: 'name',
+  targetLon: 112.5035, targetLat: 33.0325,
+  candidates: [{ name: '天主堂', lon: 112.5035, lat: 33.0343, rank: 2, type: '风景名胜' }],
+}];
+const nFile = path.join(tmp, 'cases-name.json');
+fs.writeFileSync(nFile, JSON.stringify(nameCases));
+const outN = path.join(tmp, 'n');
+const nRun = run(['--stage', 'S', '--kp', '0.04', '--ks', '0.02', '--strong', '0.85', '--out', outN, '--cases', nFile, '--before-src', beforeDir]);
+const nRes = JSON.parse(fs.readFileSync(path.join(outN, 'result.json'), 'utf8'));
+check('#27 C 段 expected=具体名称，选到该点 → 通过',
+  nRun.code === 0 && nRes.C[0].after.actualPick === '天主堂' && nRes.C[0].verdict.ok && /选到期望点/.test(nRes.C[0].verdict.why),
+  'exit=' + nRun.code + ' C=' + JSON.stringify(nRes.C[0] && { pick: nRes.C[0].after.actualPick, verdict: nRes.C[0].verdict }));
+
+// 负例：expected=天主堂，候选只有泛词「教堂」且被选中 ⇒ 必须失败（"选了非排除点"不算过）
+nameCases.C = [{
+  id: 'CN2', steleName: '靳岗天主教堂', expected: '天主堂', route: 'name',
+  targetLon: 112.5035, targetLat: 33.0325,
+  candidates: [{ name: '教堂', lon: 112.5035, lat: 33.0343, rank: 2, type: '风景名胜' }],
+}];
+const nBadFile = path.join(tmp, 'cases-name-bad.json');
+fs.writeFileSync(nBadFile, JSON.stringify(nameCases));
+const outNBad = path.join(tmp, 'n-bad');
+const nBadRun = run(['--stage', 'S', '--kp', '0.04', '--ks', '0.02', '--strong', '0.85', '--out', outNBad, '--cases', nBadFile, '--before-src', beforeDir]);
+const nBadRes = JSON.parse(fs.readFileSync(path.join(outNBad, 'result.json'), 'utf8'));
+check('#27 C 段 expected 不符 → 失败且 exit 1（负例）',
+  nBadRun.code === 1 && nBadRes.C[0] && !nBadRes.C[0].verdict.ok && /期望 天主堂/.test(nBadRes.C[0].verdict.why),
+  'exit=' + nBadRun.code + ' verdict=' + JSON.stringify(nBadRes.C[0] && nBadRes.C[0].verdict));
+
+// #27：C 段 expectedDistanceKm 校验（与 #22b drift 同构，C05 用它锚定 6.2 km）。
+const distCase = (id, lonLatOffsetM) => ({
+  id, steleName: '靳岗天主教堂', expected: '天主堂', route: 'name',
+  targetLon: 112.509, targetLat: 33.034,
+  expectedDistanceKm: 6.2, distanceToleranceKm: 0.05,
+  candidates: [{ name: '天主堂', lon: 112.509, lat: 33.034 + lonLatOffsetM / 111320, rank: 2, type: '风景名胜' }],
+});
+const distCases = JSON.parse(fs.readFileSync(CASES, 'utf8'));
+distCases.C = [distCase('CD1', 6193)];
+const distFile = path.join(tmp, 'cases-dist.json');
+fs.writeFileSync(distFile, JSON.stringify(distCases));
+const distOut = path.join(tmp, 'd');
+const distRun = run(['--stage', 'S', '--kp', '0.04', '--ks', '0.02', '--strong', '0.85', '--out', distOut, '--cases', distFile, '--before-src', beforeDir]);
+const distRes = JSON.parse(fs.readFileSync(path.join(distOut, 'result.json'), 'utf8'));
+check('#27 C 段距离在期望容差内 → 通过（distance 6.2）',
+  distRun.code === 0 && distRes.C[0].distance === 6.2 && distRes.C[0].verdict.ok && /距离 6\.2 km（期望 6\.2/.test(distRes.C[0].verdict.why),
+  'exit=' + distRun.code + ' C=' + JSON.stringify(distRes.C[0] && { distance: distRes.C[0].distance, verdict: distRes.C[0].verdict }));
+
+// 负例：期望 6.2 km，实际约 4.0 km ⇒ 必须失败（不能用"容差差不多"掩盖）
+distCases.C = [distCase('CD2', 4000)];
+const distBadFile = path.join(tmp, 'cases-dist-bad.json');
+fs.writeFileSync(distBadFile, JSON.stringify(distCases));
+const distBadOut = path.join(tmp, 'd-bad');
+const distBadRun = run(['--stage', 'S', '--kp', '0.04', '--ks', '0.02', '--strong', '0.85', '--out', distBadOut, '--cases', distBadFile, '--before-src', beforeDir]);
+const distBadRes = JSON.parse(fs.readFileSync(path.join(distBadOut, 'result.json'), 'utf8'));
+check('#27 C 段距离超出期望容差 → 失败且 exit 1（负例）',
+  distBadRun.code === 1 && distBadRes.C[0] && !distBadRes.C[0].verdict.ok && /超出期望 6\.2/.test(distBadRes.C[0].verdict.why),
+  'exit=' + distBadRun.code + ' verdict=' + JSON.stringify(distBadRes.C[0] && distBadRes.C[0].verdict));
+
 fs.rmSync(tmp, { recursive: true, force: true });
 finish();

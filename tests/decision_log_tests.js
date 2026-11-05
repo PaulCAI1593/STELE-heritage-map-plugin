@@ -137,8 +137,9 @@ const log = global.window.HMP.decisionLog;
     v2.routes.name.candidates.map(c => c.score).join() === '0.93,0.88,0.81,0.72,0.65',
     v2.routes.name.candidates.map(c => c.score).join());
   // #24：契约加 exactName（schema 仍为 2）；coordinateDriftKm 仅在 3–10 km 同名命中时出现，属可选字段
-  const KEYS = ['name', 'sim', 'simAdj', 'dist', 'distScore', 'typeRank', 'subPen', 'pen', 'source', 'score', 'exactName'];
-  check('v2：候选必备字段集为契约 11 项（+ #24 exactName，可选 coordinateDriftKm）',
+  // #27：契约再加 shortForm/shortFormCore；旧日志没有这两个字段，读取侧按 false/null 处理
+  const KEYS = ['name', 'sim', 'simAdj', 'dist', 'distScore', 'typeRank', 'subPen', 'pen', 'source', 'score', 'exactName', 'shortForm', 'shortFormCore'];
+  check('v2：候选必备字段集为契约 13 项（+ #24 exactName、#27 shortForm/shortFormCore，可选 coordinateDriftKm）',
     v2.routes.name.candidates.every(c => KEYS.every(k => k in c)) &&
     v2.routes.name.candidates.every(c => Object.keys(c).length >= KEYS.length && Object.keys(c).length <= KEYS.length + 1),
     JSON.stringify(Object.keys(v2.routes.name.candidates[0])));
@@ -203,6 +204,25 @@ const log = global.window.HMP.decisionLog;
   const outEntry = (await log.all())[3];
   check('#26 越界的 coordinateDistanceKm 不写（负例）',
     outEntry.final && !('coordinateDistanceKm' in outEntry.final), JSON.stringify(outEntry.final));
+
+  // #27：短名后缀字段（候选 + final），旧记录没有时按 false/null 读
+  await log.append({
+    site: '靳岗天主教堂', provider: 'amap',
+    routes: { name: { candidates: [{ name: '天主堂', sim: 0.5, simAdj: 0.86, dist: 200, score: 0.8, shortForm: true, shortFormCore: '天主' }] } },
+    final: { pickedName: '天主堂', sim: 0.5, simAdj: 0.86, dist: 200, source: 'name', shortForm: true, shortFormCore: '天主' },
+  });
+  const sfEntry = (await log.all()).find(e => e.site === '靳岗天主教堂');
+  check('#27 候选带 shortForm/shortFormCore',
+    !!sfEntry && sfEntry.routes.name.candidates.length === 1 &&
+    sfEntry.routes.name.candidates[0].shortForm === true && sfEntry.routes.name.candidates[0].shortFormCore === '天主',
+    sfEntry && JSON.stringify(sfEntry.routes.name.candidates));
+  check('#27 final 带 shortForm/shortFormCore（sim 保留原值 0.5、simAdj 0.86）',
+    !!sfEntry && sfEntry.final.shortForm === true && sfEntry.final.shortFormCore === '天主' &&
+    sfEntry.final.sim === 0.5 && sfEntry.final.simAdj === 0.86, sfEntry && JSON.stringify(sfEntry.final));
+  await log.append({ site: '短名旧记录', provider: 'amap', final: { pickedName: '短名旧记录', sim: 1, dist: 10, source: 'name' } });
+  const sfCompat = (await log.all()).find(e => e.site === '短名旧记录');
+  check('#27 旧记录读成 shortForm=false / shortFormCore=null',
+    !!sfCompat && sfCompat.final.shortForm === false && sfCompat.final.shortFormCore === null, sfCompat && JSON.stringify(sfCompat.final));
 
   finish();
 })().catch(e => { console.error('测试异常:', e); process.exit(1); });

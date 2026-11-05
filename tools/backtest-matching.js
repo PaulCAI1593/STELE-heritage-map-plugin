@@ -17,7 +17,8 @@
 //   "A": [{id, steleName, expected: "correct"|"wrong"|"unmatched", route, candidates:[{name,lon,lat,rank}]}],
 //   "B": [{id, steleName, expected: "institution"|"homonymFalsePick"|"homonymReject", route, candidates:[...]}],
 //   "C": [{id, steleName, route, candidates:[...], before: {...}|null, after: {...}|null,
-//          expected?, forbiddenPicks?, expectedDriftKm?, driftToleranceKm?}]
+//          expected?, forbiddenPicks?, expectedDriftKm?, driftToleranceKm?,
+//          expectedDistanceKm?, distanceToleranceKm?}]
 // }
 //
 // ⚠️ 阶段 L 只验证「日志/可解释性改动不影响 top1」；KP/KS 惩罚属阶段 S，本阶段不参与打分，
@@ -109,8 +110,10 @@ function pickTop1(matcher, c, kp, ks) {
     if (rankOf(x) === 0) return false;
     if (tLon != null && tLat != null && Number.isFinite(x.lon) && Number.isFinite(x.lat)) {
       // #24：完全同名候选在 3–10 km 内也进入池（业务侧同样放宽），其余仍按 NAME_MAX_DIST。
+      // #27：短名后缀候选（靳岗天主教堂 → 天主堂 6.2 km）同样放宽到 10 km，与业务侧一致。
       const exact = typeof matcher.isExactName === 'function' && matcher.isExactName(c.steleName, x.name);
-      const limit = exact ? (matcher.COORD_DRIFT_MAX_DIST || 10000) : NAME_MAX_DIST;
+      const short = typeof matcher.shortFormOf === 'function' && !!matcher.shortFormOf(c.steleName, x.name);
+      const limit = (exact || short) ? (matcher.COORD_DRIFT_MAX_DIST || 10000) : NAME_MAX_DIST;
       if (distM(tLon, tLat, x.lon, x.lat) > limit) return false;
     }
     return true;
@@ -237,6 +240,9 @@ function runOnce(opts, matcher) {
       // #22b：真机案例可带期望坐标偏差（km）与容差；容差缺省 0.05 km。
       expectedDriftKm: Number.isFinite(c.expectedDriftKm) ? c.expectedDriftKm : null,
       driftToleranceKm: Number.isFinite(c.driftToleranceKm) ? c.driftToleranceKm : null,
+      // #27：真机远距离案例（短名/同名 3–10 km）可带期望距离与容差；容差缺省 0.05 km。
+      expectedDistanceKm: Number.isFinite(c.expectedDistanceKm) ? c.expectedDistanceKm : null,
+      distanceToleranceKm: Number.isFinite(c.distanceToleranceKm) ? c.distanceToleranceKm : null,
       forbiddenPicks: Array.isArray(c.forbiddenPicks) ? c.forbiddenPicks.slice() : null,
       candidates: (c.candidates || []).map(x => x && x.name).filter(Boolean),
       before: c.before && Object.keys(c.before).length ? c.before : null,
@@ -276,9 +282,19 @@ function baseVerdictOf(matcher, c) {
   const excluded = pick && matcher && typeof matcher.exclusionKindOf === 'function'
     ? matcher.exclusionKindOf(c.steleName, pick) : null;
   if (excluded) return { ok: false, why: '选中被排除点(' + excluded.kind + ')：' + pick };
-  const hasSelf = (c.candidates || []).indexOf(c.steleName) >= 0;
+  // 汇总记录里的 candidates 是名字数组；原始 case 里是对象数组——两种都要认。
+  const hasSelf = (c.candidates || []).some(x =>
+    (typeof x === 'string' ? x : (x && x.name)) === c.steleName);
   if (hasSelf) return { ok: pick === c.steleName, why: pick === c.steleName ? '选本体' : (pick ? '本体在候选内但选了 ' + pick : '本体在候选内却未匹配') };
   if (typeof expect === 'string' && expect.indexOf('不得选') >= 0) return { ok: pick === null, why: pick === null ? '未匹配（符合期望）' : '期望不选排除点，实际选到 ' + pick };
+  // #27：expected 写成具体名称时（如 C05「天主堂」）必须选到该点，不能只验"选了个非排除点"。
+  if (typeof expect === 'string' && expect.trim()) {
+    return {
+      ok: pick === expect,
+      why: pick === expect ? '选到期望点'
+        : (pick ? '期望 ' + expect + '，实际选到 ' + pick : '期望 ' + expect + '，但未匹配'),
+    };
+  }
   return { ok: pick !== null, why: pick === null ? '未匹配' : 'pick 非排除点' };
 }
 
@@ -298,19 +314,45 @@ function driftKmOf(matcher, c) {
   return Math.round(a.dist / 100) / 10;
 }
 
+// #27：C 段远距离校验（与 #22b drift 同构）。
+//   口径与业务侧 final.coordinateDistanceKm 一致：命中且直线距离 > 3 km 时取 1 位小数公里
+//   （round(dist/100)/10）；短名（天主堂 6.2 km）与同名（玄妙观 6.7 km）都算。
+//   case 带 expectedDistanceKm 时，实际距离必须落在 distanceToleranceKm（默认 0.05 km）内。
+const DISTANCE_TOLERANCE_DEFAULT_KM = 0.05;
+function distanceKmOf(c) {
+  const a = c && c.after;
+  if (!a || a.actualPick == null || !Number.isFinite(a.dist)) return null;
+  if (a.dist <= NAME_MAX_DIST) return null;
+  return Math.round(a.dist / 100) / 10;
+}
+
 function verdictOf(matcher, c) {
-  const base = baseVerdictOf(matcher, c);
-  if (!Number.isFinite(c.expectedDriftKm)) return base;
-  const actual = driftKmOf(matcher, c);
-  const tol = Number.isFinite(c.driftToleranceKm) ? c.driftToleranceKm : DRIFT_TOLERANCE_DEFAULT_KM;
-  if (actual == null) {
-    return { ok: false, why: base.why + '；期望同名坐标偏差 ' + c.expectedDriftKm + ' km，但未命中同名点或无距离' };
+  let out = baseVerdictOf(matcher, c);
+  if (Number.isFinite(c.expectedDriftKm)) {
+    const actual = driftKmOf(matcher, c);
+    const tol = Number.isFinite(c.driftToleranceKm) ? c.driftToleranceKm : DRIFT_TOLERANCE_DEFAULT_KM;
+    if (actual == null) {
+      return { ok: false, why: out.why + '；期望同名坐标偏差 ' + c.expectedDriftKm + ' km，但未命中同名点或无距离' };
+    }
+    const delta = Math.abs(actual - c.expectedDriftKm);
+    if (delta > tol + 1e-9) {
+      return { ok: false, why: out.why + '；坐标偏差 ' + actual.toFixed(1) + ' km 超出期望 ' + c.expectedDriftKm + ' ± ' + tol + ' km（差 ' + delta.toFixed(3) + '）' };
+    }
+    out = { ok: out.ok, why: out.why + '；坐标偏差 ' + actual.toFixed(1) + ' km（期望 ' + c.expectedDriftKm + ' ± ' + tol + '）' };
   }
-  const delta = Math.abs(actual - c.expectedDriftKm);
-  if (delta > tol + 1e-9) {
-    return { ok: false, why: base.why + '；坐标偏差 ' + actual.toFixed(1) + ' km 超出期望 ' + c.expectedDriftKm + ' ± ' + tol + ' km（差 ' + delta.toFixed(3) + '）' };
+  if (Number.isFinite(c.expectedDistanceKm)) {
+    const actual = distanceKmOf(c);
+    const tolD = Number.isFinite(c.distanceToleranceKm) ? c.distanceToleranceKm : DISTANCE_TOLERANCE_DEFAULT_KM;
+    if (actual == null) {
+      return { ok: false, why: out.why + '；期望远距离 ' + c.expectedDistanceKm + ' km，但未命中或距离 ≤3 km' };
+    }
+    const delta = Math.abs(actual - c.expectedDistanceKm);
+    if (delta > tolD + 1e-9) {
+      return { ok: false, why: out.why + '；距离 ' + actual.toFixed(1) + ' km 超出期望 ' + c.expectedDistanceKm + ' ± ' + tolD + ' km（差 ' + delta.toFixed(3) + '）' };
+    }
+    out = { ok: out.ok, why: out.why + '；距离 ' + actual.toFixed(1) + ' km（期望 ' + c.expectedDistanceKm + ' ± ' + tolD + '）' };
   }
-  return { ok: base.ok, why: base.why + '；坐标偏差 ' + actual.toFixed(1) + ' km（期望 ' + c.expectedDriftKm + ' ± ' + tol + '）' };
+  return out;
 }
 
 function isFacilityPick(matcher, steleName, pickName) {
@@ -418,7 +460,8 @@ function main() {
   // #22b：同时算 drift（业务侧 final.coordinateDriftKm 同口径），report 里列出并校验期望值。
   result.C = (result.C || []).map(cc => {
     const drift = driftKmOf(afterMatcher, cc);
-    return Object.assign({}, cc, { drift, verdict: verdictOf(afterMatcher, cc) });
+    const distance = distanceKmOf(cc);
+    return Object.assign({}, cc, { drift, distance, verdict: verdictOf(afterMatcher, cc) });
   });
   for (const cc of result.C) {
     if (!cc.verdict.ok) hard.push(cc.id + ' 不符：' + cc.verdict.why);
@@ -519,12 +562,13 @@ function main() {
     '## C 集（用户真机案例）',
     '',
     ...(result.C && result.C.length
-      ? ['| id | stele | expected | pick | sim | dist | drift | source | verdict |', '|---|---|---|---|---|---|---|---|---|',
+      ? ['| id | stele | expected | pick | sim | dist | drift | distance | source | verdict |', '|---|---|---|---|---|---|---|---|---|---|',
          ...result.C.map(c => '| ' + c.id + ' | ' + c.steleName + ' | ' + (c.expected == null ? '—' : c.expected) + ' | '
            + (c.after && c.after.actualPick ? c.after.actualPick : '（未匹配）') + ' | '
            + (c.after && c.after.sim != null ? c.after.sim : '—') + ' | '
            + (c.after && c.after.dist != null ? c.after.dist + ' m' : '—') + ' | '
            + (c.drift != null ? c.drift.toFixed(1) + ' km' : '—') + ' | '
+           + (c.distance != null ? c.distance.toFixed(1) + ' km' : '—') + ' | '
            + (c.after && c.after.source ? c.after.source : '—') + ' | '
            + (c.verdict.ok ? '✅ ' : '❌ ') + c.verdict.why + ' |')]
       : ['_无案例_']),

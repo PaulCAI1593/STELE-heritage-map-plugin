@@ -1268,6 +1268,43 @@ function check(label, cond, detail) {
       M.nameScore('承德避暑山庄', '避暑山庄'));
   }
 
+  // ============ ㉖ #27 短名后缀：靳岗天主教堂 → 天主堂（6.2 km）============
+  console.log('\n=== ㉖ 短名后缀（真实案例 C05/C06）===');
+  {
+    const real27 = [112.509, 33.034];
+    const gcjAt = dLat => { const g = GEO.wgs84ToGcj02(real27[0], real27[1] + dLat); return g[0] + ',' + g[1]; };
+    const poi27 = {
+      name: '靳岗天主教堂', nameVariants: ['靳岗天主教堂'], searchTerms: ['靳岗天主教堂'],
+      addrQuery: '河南省南阳市卧龙区 靳岗天主教堂',
+      city: '南阳市', adminLast: '南阳市 卧龙区',
+      gcj: GEO.wgs84ToGcj02(real27[0], real27[1]),
+      bd09: GEO.gcj02ToBd09(...GEO.wgs84ToGcj02(real27[0], real27[1])),
+    };
+    // C05：真实日志里天主堂在 6,193 m——统一池必须放行（sim 0.5 过不了 0.7 闸门）
+    byKeyword = {
+      '南阳市 靳岗天主教堂': [{ id: 't27', name: '天主堂', type: '风景名胜;宗教场所',
+        location: gcjAt(6193 / 111320), business: { opentime_today: '08:00-17:00' } }],
+    };
+    aroundPois = [];
+    const r27 = await CARD.queryOnePoi({ amapKey: 'K', strategyMode: 'combine' }, poi27);
+    check('#27 短名命中 6.2 km 的天主堂',
+      r27.ok && r27.info.name === '天主堂', r27.ok ? r27.info.name : '未匹配');
+    check('#27 matched 带 shortForm/shortFormCore 与 distanceKm 6.2',
+      r27.ok && r27.matched.shortForm === true && r27.matched.shortFormCore === '天主' &&
+      r27.matched.distanceKm === 6.2 && r27.matched.coordinateDriftKm === null,
+      r27.ok ? JSON.stringify([r27.matched.shortForm, r27.matched.shortFormCore,
+        r27.matched.distanceKm, r27.matched.coordinateDriftKm]) : '未匹配');
+
+    // C06：只剩纯通名候选时宁可未匹配（教堂 120 m、sim 0.727 不能靠 passes 过闸）
+    byKeyword = {
+      '南阳市 靳岗天主教堂': [{ id: 'g27', name: '教堂', type: '风景名胜;宗教场所',
+        location: gcjAt(120 / 111320), business: { opentime_today: '08:00-17:00' } }],
+    };
+    const r27b = await CARD.queryOnePoi({ amapKey: 'K', strategyMode: 'combine' }, poi27);
+    check('#27 纯通名候选不作名称证据 → 未匹配',
+      !r27b || !r27b.ok, r27b && r27b.ok ? r27b.info.name : '未匹配');
+  }
+
   console.log('\n结果: 通过 ' + pass + ' / 失败 ' + fail);
   process.exit(fail === 0 ? 0 : 1);
 })();

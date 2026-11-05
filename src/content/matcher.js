@@ -244,6 +244,61 @@
     return !!t && t === c;
   }
 
+  // #27 短名后缀：地图上不少文保只收录简称（STELE「靳岗天主教堂」→ POI「天主堂」）。
+  //   这类候选与全名只差前缀 1–4 字，原始 sim 被前缀长度拖到 0.5 上下，过不了
+  //   passes() 的名称闸门；这里给一条**严格限定**的补证路径，而不是放宽阈值：
+  //   ① 规范化后候选是目标名的后缀；② 候选 ≥3 字；③ 前缀 1–4 字；
+  //   ④ 剥掉通名后仍有 ≥2 字专名（「天主堂」→ 天主 ✓；「教堂」「城墙」「博物院」✗）。
+  //   命中后只抬 simAdj，sim 原值不动；exact / 设施 / 商户 / 行政 / 机关判定都照旧。
+  const SHORT_FORM_COMMON_WORDS = [
+    '天主堂', '礼拜堂', '纪念馆', '博物院', '城墙', '遗址', '故居', '广场',
+    '教堂', '寺', '庙', '观', '祠', '宫', '殿', '塔', '桥', '墓', '陵', '园',
+    '楼', '阁', '亭', '堂',
+  ]; // 长词优先：天主堂 → 剥成「天主」，不会只剥「堂」
+  const SHORT_FORM_SIMADJ_FLOOR = 0.86;
+  const SHORT_FORM_PREFIX_MAX = 4;
+  const SHORT_FORM_MAX_DIST = 10000; // 与 COORD_DRIFT_MAX_DIST 同源：3–10 km 的短名/同名都按本体采用
+
+  function shortFormOf(targetName, candName) {
+    const t = normalizeName(targetName), c = normalizeName(candName);
+    if (!t || !c || c.length < 3 || t === c) return null;
+    const cc = shortFormCore(c);
+    const tc = shortFormCore(t);
+    if (!cc || !tc || !tc.endsWith(cc)) return null;
+    const prefixLen = tc.length - cc.length;
+    if (prefixLen < 1 || prefixLen > SHORT_FORM_PREFIX_MAX) return null;
+    return { core: cc, prefixLen };
+  }
+
+  /**
+   * 剥掉**最长且仍留专名**的通名尾词：天主堂 → 天主（不是一剥到空）、城墙 → ''。
+   * 注意这里不用 normalizeName：它会先把「博物院」整段当噪声剥掉，导致
+   * 河南省博物院 vs 博物院 这种反例提前"变相等同"而误判为短名。
+   */
+  function shortFormCore(name) {
+    for (const w of SHORT_FORM_COMMON_WORDS) {
+      if (name.endsWith(w)) {
+        const core = name.slice(0, -w.length);
+        if (core.length >= 2) return core;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * #27：纯通名候选（教堂 / 礼拜堂 / 城墙 / 博物院 / 广场…）不作名称证据。
+   *   判定：整名就是通名，或剥掉通名后不足 2 字专名；exact 与短名后缀命中不算
+   *   （天主堂 对 靳岗天主教堂 是短名，要保留）。
+   *   只用于名称路（pick 与卡片统一池），地址/坐标路照旧。
+   */
+  function isGenericName(targetName, candName) {
+    const c = normalizeName(candName);
+    if (!c) return false;
+    if (isExactName(targetName, candName)) return false;
+    if (shortFormOf(targetName, candName)) return false;
+    return SHORT_FORM_COMMON_WORDS.some(w => c === w || (c.endsWith(w) && c.length - w.length < 2));
+  }
+
   function isMerchant(targetName, candName) { return merchantSuffixOf(targetName, candName) !== ''; }
   function isInstitution(targetName, candName) { return institutionSuffixOf(targetName, candName) !== ''; }
   function exclusionKindOf(targetName, candName) {
@@ -615,6 +670,14 @@
     const facility = excludeKind !== '';
     if (facility) simAdj = Math.min(simAdj, FACILITY_SIMADJ_CAP);
 
+    // #27：短名后缀（靳岗天主教堂 → 天主堂）。只认名称路、且候选不是借用名。
+    //   短名的原始 sim 只有 0.5 左右，进不了 passes() 的 0.7 闸门；
+    //   这里把 simAdj 抬到强证据线以上，sim 原值保留，供 dump/日志对照。
+    const shortForm = (source === 'name' && !facility) ? shortFormOf(targetName, cName) : null;
+    if (shortForm) simAdj = Math.max(simAdj, SHORT_FORM_SIMADJ_FLOOR);
+    // #27：纯通名（教堂/礼拜堂/城墙/博物院/广场…）不作名称证据——pick 与统一池跳过。
+    const generic = source === 'name' && isGenericName(targetName, cName);
+
     let typeRank = 0, mult = 1;
     if (o.rankFn) {
       typeRank = o.rankFn(c) || 0;
@@ -642,6 +705,8 @@
       source, sourcePrior: prior, absence,
       core: ev.core, prefixLen: ev.prefixLen, suffixLen: ev.suffixLen,
       coverRatio: ev.coverRatio, abstain: !!ev.abstain, exactName,
+      shortForm: !!shortForm, shortFormCore: shortForm ? shortForm.core : null,
+      generic: !!generic,
       facility, facilityWord, excludeKind, merchantWord, institutionWord, communityWord,
       merchant: !!merchantWord, institution: !!institutionWord,
     };
@@ -656,6 +721,9 @@
     isMerchant,
     isCommunity,
     isExactName,
+    shortFormOf,
+    isGenericName,
+    SHORT_FORM_MAX_DIST,
     COORD_DRIFT_MAX_DIST,
     isInstitution,
     exclusionKindOf,
@@ -725,6 +793,10 @@
             suffixLen: sc.suffixLen,
             core: sc.core,
             exactName: !!sc.exactName,
+            // #27：短名后缀（靳岗天主教堂 → 天主堂），sim 原值不变，simAdj 已抬到 0.86
+            shortForm: !!sc.shortForm,
+            shortFormCore: sc.shortFormCore || null,
+            generic: !!sc.generic,
             excludeKind: sc.excludeKind || '',
             facility: sc.facility,
             facilityWord: sc.facilityWord,
@@ -734,10 +806,16 @@
 
       // 依次取第一个"可接受"的候选。
       // 注意可接受性仍用**原始名称相似度**判定，类型偏好只影响排序，不降低门槛。
+      // #27 例外只有一条：短名后缀候选的原始 sim 天生只有 0.5 上下（前缀造成的），
+      //   但规则已严格要求“后缀 + 前缀 1–4 字 + 剥通名后仍有专名”，因此按 simAdj 接受；
+      //   距离上限与 COORD_DRIFT_MAX_DIST 同源（10000 m）。
       for (const s of scored) {
         // #14-S2：设施点（本体+游客服务中心/警务站/停车场…）永不当结果：
         // 这类候选只在“本体不存在”时才会赢，宁可未匹配也不认。
         if (s.excludeKind) continue;
+        // #27：纯通名候选不作名称证据（教堂 120 m 不能因为 sim 0.727 过 0.7 闸门就选中）。
+        if (s.generic) continue;
+        if (s.shortForm && Number.isFinite(s.dist) && s.dist <= SHORT_FORM_MAX_DIST) return s;
         if (passes(s.sim, s.dist)) return s;
       }
       return null;

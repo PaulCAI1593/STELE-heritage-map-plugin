@@ -113,6 +113,9 @@
       score: num(c.score),
       // #24：同名优先的数据基础（不改变评分，只记录）
       exactName: !!exact,
+      // #27：短名后缀（候选是目标名尾部的简称，如 天主堂 ← 靳岗天主教堂）
+      shortForm: c.shortForm === true,
+      shortFormCore: c.shortForm === true && c.shortFormCore != null ? clipName(c.shortFormCore) : null,
       ...(c.coordinateDriftKm == null ? {} : { coordinateDriftKm: num(c.coordinateDriftKm) }),
     };
   }
@@ -183,6 +186,9 @@
         source: fin.source == null ? null : String(fin.source),
         // #24：同名优先 + 3–10 km 坐标偏差（1 位小数，越界不记）
         exactName: fin.exactName === true,
+        // #27：短名后缀（旧日志没有这两个字段，读取侧按 false/null 处理）
+        shortForm: fin.shortForm === true,
+        shortFormCore: fin.shortForm === true && fin.shortFormCore != null ? clipName(fin.shortFormCore) : null,
         ...(Number.isFinite(fin.coordinateDriftKm) && fin.coordinateDriftKm > 0 && fin.coordinateDriftKm <= 10
           ? { coordinateDriftKm: Math.round(fin.coordinateDriftKm * 10) / 10 } : {}),
         // #26：远距离采用的通用距离（公里，1 位小数；旧日志无此字段照样可读）
