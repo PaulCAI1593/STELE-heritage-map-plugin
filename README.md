@@ -88,7 +88,7 @@ STELE 是一个由个人长期维护、**完全免费且无广告**的中国不�
 
 ### 方式一：下载打包好的扩展（推荐）
 
-1. 到 [Releases](https://github.com/PaulCAI1593/STELE-heritage-map-plugin/releases) 下载最新的 `STELE-heritage-map-plugin-vX.Y.Z.zip`
+1. 到 [Releases](https://github.com/PaulCAI1593/STELE-heritage-map-plugin/releases) 下载最新的 `heritage-map-plugin-vX.Y.Z.zip`（本仓库 `release/` 目录下的产物同名）
 2. 解压到一个**不会被删除的固定目录**（Chrome 会一直从这里加载）
 3. 打开 `chrome://extensions/`，右上角开启「开发者模式」
 4. 点「加载已解压的扩展程序」，选中解压出来的目录
