@@ -78,6 +78,40 @@
     });
   }
 
+  /**
+   * 导出最近 20 条匹配决策（JSON）。
+   *
+   * ⚠️ 导出内容必须**不含 API Key**：decision-log 在写入与导出时都会清洗
+   * （去掉 key/ak 字段、把 URL 里的 key= / ak= 参数打码）。这里不再二次加工，
+   * 避免两处规则不一致。
+   */
+  function exportDecisions() {
+    const log = window.HMP && window.HMP.decisionLog;
+    if (!log) {
+      showStatus('error', '决策日志模块未加载，无法导出。');
+      return;
+    }
+    log.exportJSON().then(text => {
+      let n = 0;
+      try { n = JSON.parse(text).length; } catch (e) { n = 0; }
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const blob = new Blob([text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'hmp-decisions-' + stamp + '.json';
+        document.body.appendChild(a);
+        a.click();
+        if (a.remove) a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showStatus('success', n ? '已导出 ' + n + ' 条匹配决策。' : '暂无匹配决策，已导出空列表 []。');
+      } catch (e) {
+        showStatus('error', '导出失败：' + e.message);
+      }
+    });
+  }
+
   /** 显示缓存条数与数据版本，便于判断"是不是旧缓存" */
   function refreshCacheInfo() {
     chrome.storage.local.get(null, items => {
@@ -187,6 +221,7 @@
     });
   });
   $('clearCache').addEventListener('click', clearCache);
+  if ($('exportLog')) $('exportLog').addEventListener('click', exportDecisions);
 
   document.addEventListener('DOMContentLoaded', load);
 })();

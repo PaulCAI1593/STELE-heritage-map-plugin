@@ -78,6 +78,9 @@ function setup(opts) {
   global.window.addEventListener = () => {};
   global.MutationObserver = class { observe() {} disconnect() {} };
   global.history = { state: null, replaceState() {}, pushState() {}, back() {} };
+  global.Blob = global.Blob || function (parts) { this._parts = parts; };
+  global.URL = global.URL || { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} };
+  global.setTimeout = global.setTimeout;
   try {
     global.navigator = { userAgent: 'node-test', language: 'zh-CN' };
   } catch (e) { /* Node 24 的 navigator 只读，忽略 */ }

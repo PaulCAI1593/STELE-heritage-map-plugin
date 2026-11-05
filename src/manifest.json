@@ -39,6 +39,7 @@
         "content/apis/amap.js",
         "content/apis/baidu.js",
         "content/matcher.js",
+        "content/decision-log.js",
         "content/card.js",
         "content/content.js"
       ],

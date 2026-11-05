@@ -1087,7 +1087,7 @@
       '"，直线 ' + Math.round(best.dist) + 'm，名称相似度 ' + best.nameSim.toFixed(3) +
       (best.isSub ? '（子单元，已降权）' : ''));
     return {
-      matched: { poi: best.poi, sim: best.nameSim, dist: best.dist },
+      matched: { poi: best.poi, sim: best.nameSim, dist: best.dist, score: best.score },
       info: api.extract(best.poi),
       provider,
       matchType: 'location',
@@ -1223,7 +1223,7 @@
       '，名称相似度 ' + best.nameSim.toFixed(3));
 
     return {
-      matched: { poi: best.poi, sim: best.nameSim, dist: best.dist },
+      matched: { poi: best.poi, sim: best.nameSim, dist: best.dist, score: best.score },
       info: api.extract(best.poi),
       provider,
       matchType: 'address'
@@ -1750,6 +1750,7 @@
       // 写成 amap 键后，下次仍会按用户首选重新试百度，能自愈。
       const cacheProvider = result.provider || diag.usedProvider || cfg.defaultProvider;
       payload.evidenceText = formatEvidence(diag.evidence && diag.evidence[cacheProvider]);
+      recordDecision(poi, cacheProvider, diag, result);
       await window.HMP.cache.set(
         cacheProvider, poi.name, poi.adminLast || '', payload
       );
@@ -1762,12 +1763,44 @@
         matched: null, provider: missProvider, fallbackNote, failureKind,
         evidenceText: formatEvidence(diag.evidence && diag.evidence[missProvider]),
       };
+      recordDecision(poi, missProvider, diag, null);
       // 负结果只缓存 1 小时（见 cache.setNegative）
       await window.HMP.cache.setNegative(
         missProvider, poi.name, poi.adminLast || '', missPayload
       );
       renderResult(poi, missPayload);
     }
+  }
+
+  /**
+   * 记录一条匹配决策（最近 20 条，见 content/decision-log.js）。
+   * 只记决策依据，不记 Key；失败方也记（final=null），便于排查"为什么没匹配上"。
+   */
+  function recordDecision(poi, provider, diag, result) {
+    const log = window.HMP.decisionLog;
+    if (!log || typeof log.append !== 'function') return;
+    const ev = (diag && diag.evidence && diag.evidence[provider]) || {};
+    const m = result && result.matched;
+    const finalPoi = m
+      ? ((result.info && result.info.name) || (m.poi && m.poi.name) || null)
+      : null;
+    return Promise.resolve(log.append({
+      time: new Date().toISOString(),
+      site: poi && poi.name ? poi.name : null,
+      provider,
+      evidence: {
+        name: ev.name || null,
+        address: ev.address || null,
+        nearby: ev.nearby || null,
+      },
+      chosen: result ? (result.matchType || 'name') : null,
+      final: m ? {
+        poi: finalPoi,
+        sim: Number.isFinite(m.sim) ? m.sim : null,
+        score: Number.isFinite(m.score) ? m.score : null,
+        dist: Number.isFinite(m.dist) ? Math.round(m.dist) : null,
+      } : null,
+    })).catch(() => { /* 日志失败不影响主流程 */ });
   }
 
   function renderResult(poi, cacheData) {
@@ -2107,6 +2140,7 @@
     classifyFailure,
     missingNote,
     formatEvidence,
+    recordDecision,
     findContainer,
     panelGone,
     removeCard,

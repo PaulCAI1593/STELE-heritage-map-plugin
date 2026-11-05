@@ -61,6 +61,9 @@
       <button id="testKey" class="secondary">测试 Key</button>
       <button id="clearCache" class="secondary">清除缓存</button>
     </div>
+    <div class="actions">
+      <button id="exportLog" class="secondary">导出最近 20 条匹配决策</button>
+    </div>
 
     <div id="dirtyHint" class="dirty-hint" style="display:none">
       ⚠ 有未保存的修改 —— 点「保存」后才会生效（「测试 Key」会自动先保存）
@@ -73,6 +76,7 @@
   <!-- 直接复用注入脚本里的 API 封装：测试用的就是真实请求路径与报错提示 -->
   <script src="../content/apis/amap.js"></script>
   <script src="../content/apis/baidu.js"></script>
+  <script src="../content/decision-log.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
