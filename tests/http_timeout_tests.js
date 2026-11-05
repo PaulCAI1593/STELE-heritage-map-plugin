@@ -107,7 +107,8 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
     C.classifyFailure({ providerNotes: { amap: '三路均未搜到候选' } }, 'amap') === 'no-candidates');
 
   const tNote = C.missingNote('timeout');
-  check('超时文案含「请求超时（已重试 1 次）」', tNote.indexOf('请求超时（已重试 1 次）') >= 0, tNote);
+  // 产品 §5 定稿文案：正文「地图接口超时（已重试 1 次）」（#03 起统一）
+  check('超时文案含「地图接口超时（已重试 1 次）」', tNote.indexOf('地图接口超时（已重试 1 次）') >= 0, tNote);
   check('超时文案**不含**「未搜到」「未收录」',
     tNote.indexOf('未搜到') < 0 && tNote.indexOf('未收录') < 0, tNote);
   const rNote = C.missingNote('rejected');
@@ -121,7 +122,14 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
   });
   await sleep(10);
   const rendered = env.textOf(global.__hmpBasicEl.parentNode);
-  check('卡片渲染超时文案', rendered.indexOf('请求超时（已重试 1 次）') >= 0, rendered.slice(0, 120));
+  check('卡片渲染超时文案', rendered.indexOf('地图接口超时（已重试 1 次）') >= 0, rendered.slice(0, 160));
+  const tCard = global.document.getElementById(C.CARD_ID);
+  check('超时态 data-hmp-state=timeout（与 not-found 可区分）',
+    tCard && tCard.attrs['data-hmp-state'] === 'timeout', tCard && tCard.attrs['data-hmp-state']);
+  check('超时态状态词为「超时」', rendered.indexOf('超时') >= 0, rendered.slice(0, 60));
+  check('超时态有「重试查询」按钮', !!(tCard && tCard.querySelector('.hmp-btn')) && rendered.indexOf('重试查询') >= 0,
+    tCard && !!tCard.querySelector('.hmp-btn'));
+  check('超时态含补充说明', rendered.indexOf('可能是网络慢或地图服务暂时不可用') >= 0, rendered.slice(0, 160));
   check('卡片不再显示默认「未收录」文案', rendered.indexOf('未被收录') < 0, rendered.slice(0, 120));
 
   finish();

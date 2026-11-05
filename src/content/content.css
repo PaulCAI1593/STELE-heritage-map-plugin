@@ -1,86 +1,253 @@
 /* content/content.css
- * 「开放信息」卡片样式。
+ * 「开放信息」卡片样式 · 方向 A（站点融合型，用户 2026-11-05 选定）
  *
- * 设计原则：**尽量不加自定义样式**，直接复用站点自身的类，跟着站点走就不会走样：
- *   .poi-section-hr               分隔线（站点各 section 之间都用它）
- *   .poi-section-content-padding  左右各 1rem 内边距
- *   .poi-section-title            蓝色小标题（#6699ff）
- *   .table-no-border              表格无边框（tr/td border:none !important）
- *   .attribute-table              正文色 #333
- * 以上均定义于站点 /main.css。下面只补站点没有的几处：提示文字、页脚、
- * 跳转链接行、表格表头、子项目注释。
+ * 设计原则：**无卡片外框、无阴影、无圆角**——只用站点自己的分隔线与灰蓝小标题，
+ * 放进详情面板正文流里几乎看不出是外挂。视觉重量低于站点标题与正文。
+ *
+ * 作用域纪律：所有规则一律以 #hmp-opening-card 开头（或其后代），
+ * 不给站点任何元素加全局覆盖。站点原有类（.poi-section-hr /
+ * .poi-section-content-padding / .poi-section-title / .table-no-border /
+ * .attribute-table）继续复用，只在其上做最小覆写。
+ *
+ * 无障碍改色（只在卡片作用域内生效）：
+ *   #6699ff → #3f5d8a   白底 2.78:1 → 6.68:1（链接 / 状态词）
+ *   #aaa     → #707070   白底 2.32:1 → 4.95:1（页脚）
+ *   #888     → #6b6b6b   白底 4.12:1 → 5.33:1（注释）
+ * 辅助小字（11px 页脚 / 12px 证据行）按 WCAG AA 的 4.5:1 取色，不用 3:1 放宽。
  */
 
-/* 提示文字（查询中 / 未匹配 / 匹配方式说明）——沿用站点灰色小字的观感 */
+/* ===== 状态容器：站点分隔线 + 无框正文 ===== */
+#hmp-opening-card .hmp-st {
+  padding: 13px 0 4px;
+  font: 14px/1.6 'Open Sans', 'Helvetica Neue', Arial, sans-serif,
+        'Microsoft YaHei New', 'Microsoft YaHei', STXihei;
+  color: #212529;
+}
+
+#hmp-opening-card .hmp-st-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+
+/* 状态词＝站点 .poi-section-title 的观感（灰蓝小标题），不是彩色徽章 */
+#hmp-opening-card .poi-section-title.hmp-st-word {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #3f5d8a;
+  letter-spacing: .02em;
+}
+
+/* 未匹配：中性灰（与超时的琥珀色必须可辨，产品 Q4） */
+#hmp-opening-card .hmp-st-unmatched .hmp-st-word { color: #666666; }
+
+/* 超时：琥珀色 + 独立状态类（颜色之外还有文案「超时」） */
+#hmp-opening-card .hmp-st-timeout .hmp-st-word { color: #8a5a00; }
+
+/* ===== 正文与次级说明 ===== */
 #hmp-opening-card .hmp-note {
-  font-size: 12px;
-  color: #888;
+  margin: 0 0 6px;
+  font-size: 14px;
   line-height: 1.6;
-  margin-bottom: 6px;
+  color: #333333;
   white-space: pre-wrap;
 }
 
-/* 页脚：数据来源 + 免责说明 */
-#hmp-opening-card .hmp-foot {
-  font-size: 11px;
-  color: #aaa;
-  margin-top: 4px;
+#hmp-opening-card .hmp-sub-note {
+  margin: 5px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b6b6b;
 }
 
-/* 跳转链接行（未匹配时的兜底入口） */
+/* 证据行（命中态小字 / 未匹配必显）：12px 也要过 4.5:1 */
+#hmp-opening-card .hmp-evidence {
+  margin: 5px 0 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6b6b6b;
+  opacity: 1;
+}
+
+/* 匹配行：「匹配到地图上的：{name}（直线约 {d} 米）」 */
+#hmp-opening-card .hmp-match-line {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333333;
+}
+
+#hmp-opening-card .hmp-match-line b {
+  font-weight: 600;
+  color: #212529;
+}
+
+/* ===== 信息行：复用站点 attribute-table 的观感（标签列 + 值列，无边框） ===== */
+#hmp-opening-card table.hmp-fields {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+#hmp-opening-card table.hmp-fields td {
+  padding: 3px 0;
+  border: 0;
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+#hmp-opening-card table.hmp-fields td.hmp-f-label {
+  width: 4.6em;
+  padding-right: 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #666666;
+}
+
+#hmp-opening-card table.hmp-fields td.hmp-f-val {
+  font-size: 14px;
+  color: #333333;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* ===== 跳转链接行 ===== */
 #hmp-opening-card .hmp-links {
-  margin-top: 4px;
+  margin: 7px 0 0;
   font-size: 13px;
   line-height: 1.8;
 }
 
 #hmp-opening-card .hmp-links a {
-  color: #6699ff;              /* 与站点 .poi-section-title 同色 */
+  color: #3f5d8a;
+  text-decoration: none;
   margin-right: 14px;
+  white-space: nowrap;
 }
 
-#hmp-opening-card .hmp-links a:hover {
-  text-decoration: underline !important;
+#hmp-opening-card .hmp-links a:hover { text-decoration: underline; }
+
+#hmp-opening-card .hmp-links a:focus-visible,
+#hmp-opening-card .hmp-btn:focus-visible {
+  outline: 2px solid #3f5d8a;
+  outline-offset: 2px;
 }
 
-/* 文物组表格的表头 */
-#hmp-opening-card .hmp-th {
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  padding: 4px 0;
-  text-align: left;
-}
-
-/* 子项目「实际匹配到的地图名」注释 */
-#hmp-opening-card .hmp-sub {
+/* ===== 页脚：数据来源 + 免责说明（11px 沿用站点字号下限） ===== */
+#hmp-opening-card .hmp-foot {
+  margin: 7px 0 0;
   font-size: 11px;
-  color: #999;
-  line-height: 1.35;
+  line-height: 1.6;
+  color: #707070;
 }
 
-/* 卡片内链接与站点其它链接保持一致的观感 */
-#hmp-opening-card td a {
-  color: #6699ff;
-}
-
-/* 「可能不开放」提醒：琥珀色提示条，克制但足够醒目 */
+/* ===== 提示条：站点自己的失败语汇（琥珀） ===== */
 #hmp-opening-card .hmp-alert {
+  margin: 0 0 8px;
+  padding: 6px 8px;
   font-size: 12px;
   line-height: 1.6;
   color: #8a5a00;
   background: #fff8e6;
   border-left: 3px solid #e0a800;
-  padding: 6px 8px;
-  margin-bottom: 8px;
 }
 
-#hmp-opening-card .hmp-sub-warn {
-  color: #b07a00;
+#hmp-opening-card .hmp-sub-warn { color: #8a5a00; }
+
+/* ===== 超时态动作区：重试按钮 + 兜底链接 ===== */
+#hmp-opening-card .hmp-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 9px 0 0;
 }
 
-/* 文物组表格里「用户刚点开的那个子项目」——点开子项时表格仍显示整组，标出当前行 */
-#hmp-opening-card tr.hmp-focus > td {
-  background: #f0f6ff;
+#hmp-opening-card .hmp-acts .hmp-links { margin: 0; }
+
+#hmp-opening-card .hmp-btn {
+  font: 12px/1 'Open Sans', 'Helvetica Neue', Arial, sans-serif,
+        'Microsoft YaHei New', 'Microsoft YaHei', STXihei;
+  padding: 7px 13px;
+  color: #ffffff;
+  background: #3f5d8a;
+  border: 1px solid #3f5d8a;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+#hmp-opening-card .hmp-btn:hover { background: #35507a; }
+
+/* ===== 文物组（概念态，当前版本不显示） ===== */
+#hmp-opening-card .hmp-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 7px;
+  color: #8a5a00;
+  background: #fff8e6;
+  border: 1px solid #f0d9a0;
+  border-radius: 2px;
+}
+
+#hmp-opening-card .hmp-group-title {
+  margin: 0 0 7px;
+  font-size: 14px;
   font-weight: 600;
+  color: #212529;
+}
+
+#hmp-opening-card table.hmp-grp {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12.5px;
+}
+
+#hmp-opening-card table.hmp-grp th {
+  padding: 5px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #666666;
+  text-align: left;
+  background: #f6f8fa;
+  border-bottom: 1px solid #dee2e6;
+}
+
+#hmp-opening-card table.hmp-grp td {
+  padding: 6px;
+  color: #333333;
+  border-bottom: 1px solid #eef1f4;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+#hmp-opening-card .hmp-grp-note { margin: 7px 0 0; }
+
+/* ===== 390 窄视口：字号降一档、间距收紧，优先保证不横滚/不裁切 ===== */
+@media (max-width: 430px) {
+  #hmp-opening-card .hmp-st { padding: 10px 0 3px; font-size: 13px; line-height: 1.5; }
+  #hmp-opening-card .poi-section-title.hmp-st-word { font-size: 13px; }
+  #hmp-opening-card .hmp-note,
+  #hmp-opening-card .hmp-match-line,
+  #hmp-opening-card .hmp-group-title { font-size: 13px; }
+  #hmp-opening-card table.hmp-fields td.hmp-f-val { font-size: 13px; }
+  #hmp-opening-card table.hmp-fields td { padding: 2px 0; }
+  #hmp-opening-card table.hmp-fields td.hmp-f-label { width: 4.2em; font-size: 11.5px; }
+  #hmp-opening-card .hmp-links { font-size: 12.5px; margin-top: 5px; }
+  #hmp-opening-card .hmp-foot { font-size: 11px; margin-top: 5px; }
+  #hmp-opening-card table.hmp-grp { font-size: 11.5px; }
+  #hmp-opening-card table.hmp-grp th { font-size: 11px; padding: 4px 4px; }
+  #hmp-opening-card table.hmp-grp td { padding: 5px 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #hmp-opening-card * { transition: none !important; animation: none !important; }
 }

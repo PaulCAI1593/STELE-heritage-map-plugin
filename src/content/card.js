@@ -71,22 +71,25 @@
   // 这些类与内联样式都取自 /main.css 与站点渲染代码（app.js）。
 
   const EL_TABLE_STYLE =
-    'margin-bottom:12px;padding-top:4px;border-spacing:0;border-color:#dee2e6;border-collapse:unset';
-  const EL_TD_KEY_STYLE = 'min-width:100px';
+    'margin:0 0 8px;padding:0;border:0;border-collapse:collapse;border-spacing:0;table-layout:fixed';
+  const EL_TD_KEY_STYLE = 'width:4.6em;padding-right:10px;font-size:12px;line-height:1.7';
   const EL_TD_VAL_STYLE = 'white-space:pre-wrap';
 
-  /** 站点同款「两列信息表」 */
+  /**
+   * 信息表：沿用站点的 .table-no-border.attribute-table（保持站点观感），
+   * 另挂 .hmp-fields 承载方向 A 的字号/间距（样式全部在 #hmp-opening-card 作用域内）。
+   */
   function buildTable(rows) {
     const table = el('table', {
-      className: 'table-no-border attribute-table',
+      className: 'table-no-border attribute-table hmp-fields',
       style: EL_TABLE_STYLE
     });
     const tbody = el('tbody');
     for (const r of rows) {
       if (!r || r.value == null || r.value === '') continue;
       const tr = el('tr');
-      tr.appendChild(el('td', { style: EL_TD_KEY_STYLE }, r.label));
-      const td = el('td', { style: EL_TD_VAL_STYLE });
+      tr.appendChild(el('td', { className: 'hmp-f-label', style: EL_TD_KEY_STYLE }, r.label));
+      const td = el('td', { className: 'hmp-f-val', style: EL_TD_VAL_STYLE });
       if (r.html) td.innerHTML = r.value;
       else td.textContent = String(r.value);
       tr.appendChild(td);
@@ -96,27 +99,65 @@
     return table;
   }
 
-  /** 组装成站点同款 section（hr + content-padding + 蓝色标题） */
-  function buildSection(state, bodyChildren) {
+  /** 各状态的状态词（产品 §5 文案总表；文本节点，不靠颜色/动画表达） */
+  const STATE_WORDS = {
+    loading: '查询中',
+    'no-config': '未配置',
+    error: '查询出错',
+    'not-found': '未匹配',
+    timeout: '超时',
+    found: '已匹配',
+    group: '文物组',
+  };
+
+  /**
+   * 组装卡片：站点分隔线 + content-padding + 方向 A 的「状态词 + 无框正文」。
+   *
+   * @param {object} state   渲染状态（kind / featureType）
+   * @param {Array}  bodyChildren 正文节点
+   * @param {object} [opts]  { word, visual, badge, role, ariaLabel, live }
+   *   visual —— 视觉状态：loading/unmatched/timeout/found/group/no-config/error
+   *             （决定 .hmp-st-<visual> 与 data-hmp-state；timeout 与 not-found 必须可区分）
+   */
+  function buildSection(state, bodyChildren, opts) {
+    const o = opts || {};
+    const visual = o.visual || state.kind;
+    const stateAttr = visual === 'unmatched' ? 'not-found' : visual;
+
+    const st = el('div', { className: 'hmp-st hmp-st-' + visual });
+    if (o.role) st.setAttribute('role', o.role);
+    if (o.ariaLabel) st.setAttribute('aria-label', o.ariaLabel);
+    if (o.live) st.setAttribute('aria-live', o.live);
+
+    const head = el('div', { className: 'hmp-st-head' });
+    head.appendChild(el('h6', { className: 'poi-section-title hmp-st-word' },
+      o.word || STATE_WORDS[state.kind] || '开放信息'));
+    if (o.badge) head.appendChild(el('span', { className: 'hmp-badge' }, o.badge));
+    st.appendChild(head);
+
+    for (const c of bodyChildren) if (c) st.appendChild(c);
+
     const root = el('div', {
       id: CARD_ID,
       className: 'hmp-card',
-      'data-hmp-state': state.kind,
+      'data-hmp-state': stateAttr,
       'data-hmp-feature-type': state.featureType || '',
     });
-
     root.appendChild(el('hr', { className: 'poi-section-hr' }));
-
     const body = el('div', { className: 'poi-section-content-padding' });
-    body.appendChild(el('h6', { className: 'poi-section-title' }, '开放信息'));
-    for (const c of bodyChildren) if (c) body.appendChild(c);
+    body.appendChild(st);
     root.appendChild(body);
     return root;
   }
 
-  /** 查询中 / 无配置 / 出错 / 未匹配 —— 统一的轻量提示块 */
+  /** 正文一句话（查询中 / 无配置 / 出错 / 未匹配 / 无字段记录） */
   function buildNote(text) {
     return el('div', { className: 'hmp-note' }, text);
+  }
+
+  /** 次级说明（比正文小一档、中性灰；用于超时补充说明等） */
+  function buildSubNote(text) {
+    return el('div', { className: 'hmp-sub-note' }, text);
   }
 
   /**
@@ -175,7 +216,7 @@
   /** 失败态文案：按 failureKind 分开写，避免把"超时"说成"未收录"。 */
   function missingNote(failureKind) {
     if (failureKind === 'timeout') {
-      return '请求超时（已重试 1 次），暂未取得地图数据；网络恢复后重新打开该点位即可。';
+      return '地图接口超时（已重试 1 次），暂未取得地图数据；网络恢复后重新打开该点位即可。';
     }
     if (failureKind === 'rejected') {
       return '地图上有候选点位，但名称/地址/坐标都没有通过校验，未确认是同一处，暂不展示。';
@@ -219,8 +260,10 @@
   /** 证据行：命中态用小字灰字，未命中也必须显示（解释"为什么没匹配上"） */
   function buildEvidenceNote(text, small) {
     if (!text) return null;
-    const attrs = { className: 'hmp-note' + (small ? ' hmp-evidence' : '') };
-    if (small) attrs.style = 'font-size:12px;opacity:.78;';
+    // 尺寸/透明度一律交给 content.css 的 .hmp-evidence（12px、opacity 1）。
+    // 历史实现用内联 style 的 opacity:.78，会把 #6b6b6b 实际压到 ~3.0:1，
+    // 既过不了 WCAG AA，也会被 impeccable 判 low-contrast —— 已移除。
+    const attrs = { className: small ? 'hmp-note hmp-evidence' : 'hmp-note' };
     return el('div', attrs, text);
   }
 
@@ -231,22 +274,42 @@
    * 只展示用户要的三类信息：开放时间、票价、地址。
    */
   function buildSingleCard(state) {
-    // —— 非结果态：一句提示即可 ——
+    // —— 非结果态 ——
     if (state.kind === 'loading') {
-      return buildSection(state, [buildNote('正在查询开放信息…')]);
+      return buildSection(state, [buildNote('正在查询开放信息…')],
+        { visual: 'loading', role: 'status', live: 'polite' });
     }
     if (state.kind === 'no-config') {
-      return buildSection(state, [buildNote('尚未配置地图 API Key，请点击浏览器工具栏图标进行配置。')]);
+      return buildSection(state,
+        [buildNote('尚未配置地图 API Key，请点击浏览器工具栏图标进行配置。')],
+        { visual: 'no-config', role: 'status', live: 'polite' });
     }
     if (state.kind === 'error') {
-      return buildSection(state, [buildNote('查询出错：' + (state.message || '未知错误'))]);
+      return buildSection(state, [buildNote('查询出错：' + (state.message || '未知错误'))],
+        { visual: 'error', role: 'status', live: 'polite' });
     }
     if (state.kind === 'not-found') {
+      // 超时与「未匹配」必须可区分（产品 Q4）：状态词、状态类、data-hmp-state、首句全不同。
+      if (state.failureKind === 'timeout') {
+        const acts = el('div', { className: 'hmp-acts' });
+        acts.appendChild(el('button', {
+          type: 'button',
+          className: 'hmp-btn',
+          onclick: () => retryLastQuery(),
+        }, '重试查询'));
+        acts.appendChild(buildFallbackLinks(state.amapSearchUrl, state.baiduSearchUrl));
+        return buildSection(state, [
+          el('div', { className: 'hmp-alert' }, '地图接口超时（已重试 1 次）'),
+          buildSubNote('可能是网络慢或地图服务暂时不可用。'),
+          buildEvidenceNote(state.evidenceText, false),
+          acts,
+        ], { visual: 'timeout', word: '超时', role: 'alert' });
+      }
       return buildSection(state, [
         buildNote(missingNote(state.failureKind)),
         buildEvidenceNote(state.evidenceText, false),
         buildFallbackLinks(state.amapSearchUrl, state.baiduSearchUrl),
-      ]);
+      ], { visual: 'unmatched', word: '未匹配', role: 'status', live: 'polite' });
     }
 
     // —— 命中 ——
@@ -301,15 +364,20 @@
     const d = state.matchDist;
     const distTxt = Number.isFinite(d) ? '（直线约 ' + d + ' 米）' : '';
     const matchedName = info.name || '';
+    let matchPrefix = '';
     if (state.matchType === 'location') {
-      children.push(el('div', { className: 'hmp-note' },
-        '该点位现用名与文保名称不同，已按位置匹配到：' + matchedName + distTxt));
+      matchPrefix = '该点位现用名与文保名称不同，已按位置匹配到：';
     } else if (matchedName && matchedName !== state.siteName) {
-      children.push(el('div', { className: 'hmp-note' },
-        '匹配到地图上的：' + matchedName + distTxt));
+      matchPrefix = '匹配到地图上的：';
     } else if (matchedName) {
-      children.push(el('div', { className: 'hmp-note' },
-        '地图上同名点位：' + matchedName + distTxt));
+      matchPrefix = '地图上同名点位：';
+    }
+    if (matchPrefix) {
+      const line = el('p', { className: 'hmp-match-line' });
+      line.appendChild(document.createTextNode(matchPrefix));
+      line.appendChild(el('b', {}, matchedName));
+      line.appendChild(document.createTextNode(distTxt));
+      children.push(line);
     }
 
     // 三路证据（小字）：名称/地址/坐标各有多少候选、最高相似度多少
@@ -323,13 +391,62 @@
 
     children.push(buildFallbackLinks(state.amapSearchUrl, state.baiduSearchUrl));
     children.push(buildFoot(state));
-    return buildSection(state, children);
+    return buildSection(state, children,
+      { visual: 'found', word: '已匹配', role: 'region', ariaLabel: '开放信息' });
   }
 
   /**
-   * 文物组卡片：逐个子项目列出开放时间。
-   * state.kind: 'group-loading' | 'group-no-config' | 'group-error' | 'group-done'
+   * 文物组卡片（概念态）：
+   * 方向 A 小样里的 group 态。**当前版本不显示**——产品路径不会产生
+   * card:'group'（processFeature 对文物组只记上下文、不渲染卡片），
+   * 这里只按小样落结构与类名，供设计对齐与截图验证。
+   * state: { kind:'group-done', groupName, total, truncated, results:[{name,info,...}] }
    */
+  function buildGroupCard(state) {
+    const list = Array.isArray(state.results) ? state.results : [];
+    const name = state.groupName || state.siteName || '文物组';
+    const title = name + ' · 共 ' + (Number.isFinite(state.total) ? state.total : list.length) +
+      ' 个子项目' + (state.truncated ? '（仅显示部分）' : '');
+
+    const table = el('table', { className: 'hmp-grp' });
+    const colgroup = el('colgroup');
+    ['32%', '27%', '16%', '25%'].forEach(w => {
+      colgroup.appendChild(el('col', { style: 'width:' + w }));
+    });
+    table.appendChild(colgroup);
+    const thead = el('thead');
+    const htr = el('tr');
+    ['子项目', '开放时间', '票价', '地址'].forEach(t => {
+      htr.appendChild(el('th', { scope: 'col' }, t));
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    const tbody = el('tbody');
+    for (const r of list) {
+      const info = (r && r.info) || {};
+      const tr2 = el('tr');
+      tr2.appendChild(el('td', {}, (r && r.name) || '—'));
+      tr2.appendChild(el('td', {},
+        info.opentimeWeek || info.opentimeToday || ((r && r.status === 'not-found') ? '未匹配到' : '—')));
+      tr2.appendChild(el('td', {}, (info.cost != null && info.cost !== '') ? String(info.cost) : '—'));
+      tr2.appendChild(el('td', {}, info.address || '—'));
+      tbody.appendChild(tr2);
+    }
+    table.appendChild(tbody);
+
+    const note = el('div', { className: 'hmp-foot hmp-grp-note' },
+      '组级汇总为概念态，当前版本不显示；成员与字段均待实截 · 仅供参考，请以现场公告为准');
+
+    return buildSection(state, [
+      el('p', { className: 'hmp-group-title' }, title),
+      table,
+      note,
+    ], {
+      visual: 'group', word: '文物组', role: 'region',
+      ariaLabel: name + ' 开放信息（概念态）',
+      badge: '概念态 · 当前版本不显示',
+    });
+  }
   // ========== 注入 ==========
 
   /**
@@ -432,7 +549,9 @@
     const MAX_TRIES = 25;      // 25 × 200ms = 5s
     const attempt = () => {
       if (epoch !== renderEpoch) return;   // 已被新渲染取代，或面板已关闭
-      const cardEl = buildSingleCard(state);
+      const cardEl = (state.card === 'group' && state.kind === 'group-done')
+        ? buildGroupCard(state)
+        : buildSingleCard(state);
       if (doInsert(cardEl)) {
         console.log('[HMP] 卡片已注入 (kind=' + state.kind + ', 第 ' + (tries + 1) + ' 次尝试)');
         return;
@@ -1665,6 +1784,7 @@
    * 处理单个 POI（博物馆/风景区/5A景区 等）
    */
   async function processSingle(feature) {
+    lastFeatureForRetry = feature;
     // 先记下本次查询对应的点位。必须在任何 await 之前取——
     // 否则 await 期间用户切走，这里会取到**新**点位的 key，过期判据就失效了。
     const myKey = currentPoiKey;
@@ -1993,6 +2113,19 @@
       '，地址=' + (poi.addrQuery || '(组也没有地址)'));
   }
 
+  // 最近一次查询的 feature：超时态「重试查询」按钮用它重跑，
+  // 不缓存结果、不改任何阈值（重跑就是正常的一次 processSingle）。
+  let lastFeatureForRetry = null;
+
+  /** 超时态「重试查询」：对最近一次点位重跑一遍查询 */
+  function retryLastQuery() {
+    if (!lastFeatureForRetry) {
+      console.log('[HMP] 重试：没有可重跑的点位');
+      return;
+    }
+    processSingle(lastFeatureForRetry);
+  }
+
   function processFeature(feature) {
     if (isGroup(feature)) {
       activeGroupCtx = buildGroupContext(feature);
@@ -2141,6 +2274,9 @@
     missingNote,
     formatEvidence,
     recordDecision,
+    // 方向 A 结构（#03）：概念态渲染与超时重试
+    buildGroupCard,
+    retryLastQuery,
     findContainer,
     panelGone,
     removeCard,
