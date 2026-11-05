@@ -50,11 +50,16 @@ const log = global.window.HMP.decisionLog;
     site: '带密钥点位', provider: 'amap',
     amapKey: 'SECRET_IN_ENTRY',
     url: 'https://restapi.amap.com/v3/place/text?key=SECRET_IN_URL&q=1',
+    final: {
+      pickedName: '带密钥点位', sim: 1, score: 1, dist: 10, source: 'name',
+      // v2 白名单只收契约字段；why 是唯一允许带自由文本的入口 → 必须打码
+      why: ['https://restapi.amap.com/v3/place/text?key=SECRET_IN_URL&q=1'],
+    },
   });
   const json = await log.exportJSON();
   check('导出 JSON 不含字段里的 Key', json.indexOf('SECRET_IN_ENTRY') < 0, json.slice(0, 200));
-  check('导出 JSON 不含 URL 里的 Key', json.indexOf('SECRET_IN_URL') < 0, json.slice(0, 200));
-  check('导出 JSON 里 key= 已打码', json.indexOf('key=***') >= 0, json.slice(0, 200));
+  check('导出 JSON 不含 URL 里的 Key', json.indexOf('SECRET_IN_URL') < 0, json.slice(0, 300));
+  check('导出 JSON 里 key= 已打码', json.indexOf('key=***') >= 0, json.slice(0, 300));
 
   // ── 负例⑤：非对象入参不写日志 ──
   await log.clear();
@@ -78,23 +83,95 @@ const log = global.window.HMP.decisionLog;
     { matchType: 'name', info: { name: '测试点位' },
       matched: { poi: { name: '测试点位' }, sim: 1, score: 0.93, dist: 12.6 } });
   const one = (await global.window.HMP.decisionLog.all())[0];
-  check('记录含时间', !!one && !!one.time && !isNaN(Date.parse(one.time)), one && one.time);
-  check('记录含点位与 provider', one && one.site === '测试点位' && one.provider === 'amap', JSON.stringify(one && one.site));
+  check('记录 schema=2', one && one.schema === 2, one && one.schema);
+  check('记录含时间 ts', !!one && !!one.ts && !isNaN(Date.parse(one.ts)), one && one.ts);
+  check('记录含 stele 名称', one && one.stele && one.stele.name === '测试点位', JSON.stringify(one && one.stele));
   check('记录含三路候选数与最高相似度',
-    one && one.evidence.name.candCount === 3 && one.evidence.name.bestSim === 0.91 &&
-    one.evidence.address.candCount === 1 && one.evidence.nearby.candCount === 0,
-    JSON.stringify(one && one.evidence));
-  check('记录含选中路径', one && one.chosen === 'name', one && one.chosen);
-  check('记录含最终 poi/sim/score/dist',
-    one && one.final.poi === '测试点位' && one.final.sim === 1 &&
-    one.final.score === 0.93 && one.final.dist === 13,
+    one && one.routes.name.candCount === 3 && one.routes.name.bestSim === 0.91 &&
+    one.routes.address.candCount === 1 && one.routes.nearby.candCount === 0,
+    JSON.stringify(one && one.routes));
+  check('记录含最终来源与分项',
+    one && one.final && one.final.pickedName === '测试点位' && one.final.sim === 1 &&
+    one.final.simAdj === 1 && one.final.score === 0.93 && one.final.dist === 13 &&
+    one.final.source === 'name' && one.final.distScore === 1,
     JSON.stringify(one && one.final));
+  check('记录 why 数组（本阶段只有 providerNotes）',
+    one && Array.isArray(one.final.why), JSON.stringify(one && one.final && one.final.why));
 
   // 未命中：final=null，仍留一条
   await C.recordDecision({ name: '未命中点' }, 'baidu', { evidence: { baidu: { name: { candCount: 0, bestSim: 0 } } } }, null);
   const miss = (await global.window.HMP.decisionLog.all())[1];
   check('未命中记录 final=null、chosen=null（负例）',
-    miss && miss.final === null && miss.chosen === null, JSON.stringify(miss));
+    miss && miss.final === null && miss.chosen === null && miss.schema === 2, JSON.stringify(miss));
+
+  // ── #14-L schema v2：三路 top5、字段集、排序、限长、旧 v1 兼容 ──
+  const cand = (name, score, dist) => ({
+    name, sim: score, simAdj: score, dist, distScore: 0.9,
+    typeRank: 2, subPen: 1, pen: 1, source: 'name', score,
+  });
+  await log.clear();
+  await log.append({
+    site: 'v2点位', provider: 'amap',
+    stele: { id: 's1', name: 'v2点位', tier: '全国重点' },
+    routes: {
+      name: { candCount: 9, bestSim: 0.93, candidates: [
+        cand('c1', 0.93, 10), cand('c2', 0.88, 20), cand('c3', 0.81, 30),
+        cand('c4', 0.72, 40), cand('c5', 0.65, 50), cand('c6', 0.60, 60),
+        cand('c7', 0.55, 70),
+      ] },
+      address: { candCount: 0, bestSim: 0, candidates: [] },
+      nearby: { candCount: 0, bestSim: 0 },
+    },
+    final: {
+      pickedName: 'c1', sim: 0.93, simAdj: 0.93, dist: 10, distScore: 1,
+      score: 0.95, source: 'name', why: new Array(15).fill('r'),
+    },
+  });
+  const v2 = (await log.all())[0];
+  check('v2：三路都在', v2 && v2.routes && !!v2.routes.name && !!v2.routes.address && !!v2.routes.nearby,
+    JSON.stringify(v2 && Object.keys(v2.routes || {})));
+  check('v2：候选最多 5 条', v2.routes.name.candidates.length === 5,
+    'len=' + v2.routes.name.candidates.length);
+  check('v2：candCount 保留总数 9（不是 5）', v2.routes.name.candCount === 9, String(v2.routes.name.candCount));
+  check('v2：按 score 降序、同分按 dist',
+    v2.routes.name.candidates.map(c => c.score).join() === '0.93,0.88,0.81,0.72,0.65',
+    v2.routes.name.candidates.map(c => c.score).join());
+  const KEYS = ['name', 'sim', 'simAdj', 'dist', 'distScore', 'typeRank', 'subPen', 'pen', 'source', 'score'];
+  check('v2：候选字段集恰为契约 10 项',
+    v2.routes.name.candidates.every(c => KEYS.every(k => k in c)) &&
+    v2.routes.name.candidates.every(c => Object.keys(c).length === KEYS.length),
+    JSON.stringify(Object.keys(v2.routes.name.candidates[0])));
+  check('v2：commit L 的 simAdj 恒等 sim',
+    v2.routes.name.candidates.every(c => c.simAdj === c.sim) && v2.final.simAdj === v2.final.sim,
+    JSON.stringify(v2.final));
+  check('v2：why 最多 10 条', v2.final.why.length === 10, 'len=' + v2.final.why.length);
+  check('v2：长名称截到 120 字以内（负例）', (() => {
+    // 直接测归一化函数，避免再造一条日志
+    const n = log.__test.normalizeV2({ stele: { name: 'x'.repeat(300) } });
+    return n.stele.name.length <= 121 && /…$/.test(n.stele.name);
+  })(), '');
+
+  // 旧 v1 记录：不经 append，直接塞进 storage，仍能读且标 schema:1
+  await log.clear();
+  const rawV1 = [{
+    time: '2026-11-01T00:00:00.000Z', site: '旧点位', provider: 'baidu',
+    evidence: { name: { candCount: 2, bestSim: 0.7 } },
+    chosen: 'name',
+    final: { poi: '旧点位', sim: 0.7, score: 0.8, dist: 5 },
+  }];
+  await new Promise(r => chrome.storage.local.set({ [log.STORAGE_KEY]: rawV1 }, r));
+  const readBack = await log.all();
+  check('旧 v1 仍能读', readBack.length === 1 && readBack[0].site === '旧点位', JSON.stringify(readBack));
+  check('旧 v1 标 schema:1 · 无候选明细',
+    readBack[0].schema === 1 && readBack[0].note === '无候选明细', JSON.stringify(readBack[0].schema));
+  check('旧 v1 导出含 schema:1（可读）',
+    (await log.exportJSON()).indexOf('"schema": 1') >= 0, '');
+
+  // 环形：v1 与 v2 混存也不丢
+  await log.append({ site: '新点位', provider: 'amap' });
+  const mixed = await log.all();
+  check('v1+v2 混存：都能读且条数正确', mixed.length === 2 &&
+    mixed[0].schema === 1 && mixed[1].schema === 2, mixed.map(x => x.schema).join());
 
   finish();
 })().catch(e => { console.error('测试异常:', e); process.exit(1); });

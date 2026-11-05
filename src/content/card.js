@@ -975,6 +975,8 @@
     // 子项反查出来的"父 POI" uid 集合（百度专用，见下方 resolveParents）
     const parentIds = new Set();
     let best = null;
+    // #14-L：产出 best 的那一路候选（含分项），只给决策日志用
+    let bestCand = null;
     // 统计请求失败：如果**每个**变体都失败（例如跨域被拦），
     // 不能静默返回 null —— 那会被上层记成"未搜到候选"，
     // 掩盖真正的失败原因（这正是百度侧长期被误判的原因）。
@@ -1029,7 +1031,7 @@
             x.score.toFixed(2) + (x.isSub ? '/子' : '') +
             (x.dist == null ? '' : '/' + x.dist + 'm') + ')').join('  '));
       }
-      if (matched && (!best || matched.sim > best.sim)) best = matched;
+      if (matched && (!best || matched.sim > best.sim)) { best = matched; bestCand = cand; }
       if (best && best.sim >= EARLY_ACCEPT_SIM) break;
     }
 
@@ -1076,7 +1078,16 @@
       }
     }
 
-    if (ev) { ev.candCount = seen.size; ev.bestSim = best ? best.sim : 0; }
+    if (ev) {
+      ev.candCount = seen.size;
+      ev.bestSim = best ? best.sim : 0;
+      // #14-L：父 POI 反查命中时没有 dump，就用手上的 matched 记录一条
+      ev.candidates = bestCand || (best ? [{
+        name: best.poi.name, sim: best.sim, dist: best.dist,
+        typeRank: best.typeRank, subPen: best.subPen, pen: best.pen,
+        distScore: best.distScore, score: best.score,
+      }] : []);
+    }
     if (!best) {
       if (tried > 0 && errored === tried) throw lastErr;   // 全是请求失败
       console.log('[HMP]', provider, '名称检索无可用匹配');
@@ -1195,7 +1206,10 @@
       const pen = candidatePenalty(c, targetVariants, poi.name, poi);
       score *= pen;
 
-      scored.push({ poi: c, dist, rank, nameSim, isSub: pen < 1, score });
+      scored.push({
+        poi: c, dist, rank, nameSim, isSub: pen < 1, score,
+        typeRank: rank, distScore, subPen: pen, pen,
+      });
     }
     if (!scored.length) {
       console.log('[HMP]', provider, '周边候选全部被过滤（超半径或属商业 POI）');
@@ -1204,7 +1218,11 @@
 
     scored.sort((a, b) => b.score - a.score);
     const best = scored[0];
-    if (ev) { ev.candCount = candidates.length; ev.bestSim = best.nameSim; }
+    if (ev) {
+      ev.candCount = candidates.length;
+      ev.bestSim = best.nameSim;
+      ev.candidates = scored.slice(0, 10);
+    }
     console.log('[HMP]', provider, '位置命中："' + best.poi.name +
       '"，直线 ' + Math.round(best.dist) + 'm，名称相似度 ' + best.nameSim.toFixed(3) +
       (best.isSub ? '（子单元，已降权）' : ''));
@@ -1333,13 +1351,21 @@
       const nameSim = bestNameSim(c.name);
       const noBonus = (wantNo && houseNoOf(c.address) === wantNo) ? HOUSE_NO_BONUS : 1;
       const containerBonus = (fromGroup && isContainer(c.name)) ? 1.15 : 1;
-      const score = (typeScore * W_TYPE + distScore * W_DIST + nameSim * W_NAME) *
-        candidatePenalty(c, targetVariants, poi.name) * noBonus * containerBonus;
-      return { poi: c, dist, rank, nameSim, score };
+      const structural = candidatePenalty(c, targetVariants, poi.name);
+      const pen = structural * noBonus * containerBonus;
+      const score = (typeScore * W_TYPE + distScore * W_DIST + nameSim * W_NAME) * pen;
+      return {
+        poi: c, dist, rank, nameSim, score,
+        typeRank: rank, distScore, subPen: structural, pen,
+      };
     });
     scored.sort((a, b) => (b.score - a.score) || (a.dist - b.dist));
     const best = scored[0];
-    if (ev) { ev.candCount = usable.length; ev.bestSim = best.nameSim; }
+    if (ev) {
+      ev.candCount = usable.length;
+      ev.bestSim = best.nameSim;
+      ev.candidates = scored.slice(0, 10);
+    }
     console.log('[HMP]', provider, '地址命中："' + best.poi.name + '"' +
       (Number.isFinite(best.dist) ? '，直线 ' + Math.round(best.dist) + 'm' : '') +
       '，名称相似度 ' + best.nameSim.toFixed(3));
@@ -1907,22 +1933,45 @@
     const finalPoi = m
       ? ((result.info && result.info.name) || (m.poi && m.poi.name) || null)
       : null;
+    // schema 2（#14-L）：三路 top5 候选 + 分项；旧字段 time/site 保留给人工阅览。
+    const why = [];
+    const note = diag && diag.providerNotes && diag.providerNotes[provider];
+    if (note) why.push(note);
+    if (diag && diag.fallbackFrom) why.push('已从' + diag.fallbackFrom + '回退到' + provider);
+    const refDist = m && Number.isFinite(m.dist) ? m.dist : null;
+    const distScore = !Number.isFinite(refDist) ? null
+      : (refDist < 30 ? 1 : Math.max(0, 1 - (refDist - 30) / 1500));
     return Promise.resolve(log.append({
+      schema: 2,
+      ts: new Date().toISOString(),
+      version: (window.chrome && chrome.runtime && chrome.runtime.getManifest)
+        ? chrome.runtime.getManifest().version : null,
+      stele: {
+        id: poi && poi.id != null ? poi.id : null,
+        name: poi && poi.name ? poi.name : null,
+        tier: poi && (poi.tier || poi.level || poi.grade) ? (poi.tier || poi.level || poi.grade) : null,
+      },
+      routes: {
+        name: ev.name || {},
+        address: ev.address || {},
+        nearby: ev.nearby || {},
+      },
+      final: m ? {
+        pickedName: finalPoi,
+        sim: Number.isFinite(m.sim) ? m.sim : null,
+        // commit L：惩罚尚未引入，simAdj 暂等值 sim
+        simAdj: Number.isFinite(m.sim) ? m.sim : null,
+        dist: refDist == null ? null : Math.round(refDist),
+        distScore,
+        score: Number.isFinite(m.score) ? m.score : null,
+        source: result.matchType || 'name',
+        why,
+      } : null,
+      // 兼容字段：旧版阅读习惯/旧测试断言仍能看到时间、点位、家、选用路
       time: new Date().toISOString(),
       site: poi && poi.name ? poi.name : null,
       provider,
-      evidence: {
-        name: ev.name || null,
-        address: ev.address || null,
-        nearby: ev.nearby || null,
-      },
       chosen: result ? (result.matchType || 'name') : null,
-      final: m ? {
-        poi: finalPoi,
-        sim: Number.isFinite(m.sim) ? m.sim : null,
-        score: Number.isFinite(m.score) ? m.score : null,
-        dist: Number.isFinite(m.dist) ? Math.round(m.dist) : null,
-      } : null,
     })).catch(() => { /* 日志失败不影响主流程 */ });
   }
 

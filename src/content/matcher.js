@@ -464,7 +464,11 @@
         const subPen = subUnitPenalty(tVars, cName, targetName);
         const custPen = penFn ? (penFn(c) || 1) : 1;
         const score = (sim * 0.6 + distScore * 0.4) * mult * subPen * custPen;
-        return { poi: c, sim, dist, typeRank, score, isSub: subPen < 1 };
+        return {
+          poi: c, sim, dist, typeRank, score, isSub: subPen < 1,
+          // #14-L：分项只供决策日志解释，不参与上面的 score
+          distScore, subPen, pen: custPen,
+        };
       });
 
       // 先按综合分（含类型偏好）排；同分再看距离
@@ -479,6 +483,12 @@
           dump.push({
             name: sc.poi.name, sim: sc.sim, score: sc.score,
             isSub: !!sc.isSub, dist: Number.isFinite(sc.dist) ? Math.round(sc.dist) : null,
+            // #14-L：可解释性分项（只记录，不参与打分；simAdj 本阶段恒等 sim）
+            simAdj: sc.sim,
+            distScore: sc.distScore,
+            typeRank: sc.typeRank,
+            subPen: sc.subPen,
+            pen: sc.pen,
           });
         }
       }

@@ -1,0 +1,321 @@
+#!/usr/bin/env node
+// tools/backtest-matching.js
+// #14-L 回测脚本（脚本契约见 02-design/匹配重构/方案-v2.md「回测执行与分工」）。
+//
+// 用法（参数无隐藏默认值：--kp/--ks/--strong 必须显式传）：
+//   node tools/backtest-matching.js --stage L --kp 0.04 --ks 0.02 --strong 0.85 \
+//        --out 03-build/开发/证据/task14L [--cases <json>] [--before-src <dir>]
+//   node tools/backtest-matching.js --stage S --kp 0.04 --ks 0.02 --strong 0.85 --out <dir>
+//   node tools/backtest-matching.js --sweep --stage S ...（35 组：KP 7 档 × KS 5 档）
+//
+// 输出：<out>/result.json（契约固定结构）+ <out>/report.md（人读表）。
+// 退出码：0 = 通过；1 = 硬约束不满足（top1 有差异 / 必需文件缺失 / 数据非法）；2 = 用法错误。
+//
+// 数据集格式（--cases，默认 tests/fixtures/backtest/cases-L.json）：
+// {
+//   "meta": {"synthetic": true, "note": "..."},
+//   "A": [{id, steleName, expected: "correct"|"wrong"|"unmatched", route, candidates:[{name,lon,lat,rank}]}],
+//   "B": [{id, steleName, expected: "institution"|"homonymFalsePick"|"homonymReject", route, candidates:[...]}],
+//   "C": [{id, steleName, route, candidates:[...], before: {...}|null, after: {...}|null}]
+// }
+//
+// ⚠️ 阶段 L 只验证「日志/可解释性改动不影响 top1」；KP/KS 惩罚属阶段 S，本阶段不参与打分，
+//    因此 --sweep 在 --stage L 下直接判为用法错误（exit 2），避免给出"扫了但没生效"的假结论。
+
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const crypto = require('crypto');
+
+const ROOT = path.resolve(__dirname, '..');
+const SRC = path.join(ROOT, 'src/content');
+const DEFAULT_CASES = path.join(ROOT, 'tests/fixtures/backtest/cases-L.json');
+
+function usage(msg) {
+  if (msg) console.error('用法错误：' + msg);
+  console.error('用法: node tools/backtest-matching.js --stage L|S --kp <n> --ks <n> --strong <n> --out <dir> [--cases <json>] [--before-src <dir>] [--sweep]');
+  process.exit(2);
+}
+
+function parseArgs(argv) {
+  const out = { stage: null, kp: null, ks: null, strong: null, out: null, cases: DEFAULT_CASES, beforeSrc: null, sweep: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    const val = () => {
+      const v = argv[++i];
+      if (v == null || v.startsWith('--')) usage('参数 ' + a + ' 缺值');
+      return v;
+    };
+    if (a === '--stage') out.stage = val();
+    else if (a === '--kp') out.kp = Number(val());
+    else if (a === '--ks') out.ks = Number(val());
+    else if (a === '--strong') out.strong = Number(val());
+    else if (a === '--out') out.out = val();
+    else if (a === '--cases') out.cases = path.resolve(val());
+    else if (a === '--before-src') out.beforeSrc = path.resolve(val());
+    else if (a === '--sweep') out.sweep = true;
+    else if (a === '--help' || a === '-h') { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 30).join('\n')); process.exit(0); }
+    else usage('未知参数 ' + a);
+  }
+  return out;
+}
+
+function loadMatcher(dir) {
+  const file = path.join(dir, 'matcher.js');
+  if (!fs.existsSync(file)) throw new Error('找不到 matcher.js：' + file);
+  const code = fs.readFileSync(file, 'utf8');
+  const sandbox = { window: { HMP: {} }, console: { log() {}, warn() {}, error() {} }, Math, Number, String, Array, Object, JSON };
+  vm.createContext(sandbox);
+  vm.runInContext(code, sandbox, { filename: file });
+  const m = sandbox.window.HMP && sandbox.window.HMP.matcher;
+  if (!m || typeof m.pick !== 'function') throw new Error('matcher.js 未导出 matcher.pick');
+  return m;
+}
+
+function rankOf(c) {
+  // 数据集里 rank：2=可参观（文物/景点/博物馆），1=未知，0=设施/商业
+  const r = Number(c && c.rank);
+  return Number.isFinite(r) ? r : 1;
+}
+
+function pickTop1(matcher, c, kp, ks) {
+  const target = {
+    name: c.steleName,
+    nameVariants: Array.isArray(c.nameVariants) && c.nameVariants.length ? c.nameVariants : undefined,
+    lon: Number.isFinite(c.targetLon) ? c.targetLon : (c.candidates[0] ? c.candidates[0].lon : null),
+    lat: Number.isFinite(c.targetLat) ? c.targetLat : (c.candidates[0] ? c.candidates[0].lat : null),
+  };
+  const dump = [];
+  const m = matcher.pick(target, c.candidates || [], { rank: rankOf, dump });
+  if (!m) return { pick: null, dump };
+  return {
+    pick: {
+      actualPick: m.poi && m.poi.name ? m.poi.name : null,
+      score: Number.isFinite(m.score) ? Math.round(m.score * 1e6) / 1e6 : null,
+      source: c.route || null,
+      sim: Number.isFinite(m.sim) ? Math.round(m.sim * 1e6) / 1e6 : null,
+      simAdj: Number.isFinite(m.sim) ? Math.round(m.sim * 1e6) / 1e6 : null,
+      dist: Number.isFinite(m.dist) ? Math.round(m.dist) : null,
+    },
+    dump,
+  };
+}
+
+function readCases(file) {
+  if (!fs.existsSync(file)) throw new Error('找不到数据集：' + file);
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const k of ['A', 'B', 'C']) {
+    if (data[k] != null && !Array.isArray(data[k])) throw new Error('数据集 ' + k + ' 必须是数组');
+  }
+  return data;
+}
+
+function classifyABeforeAfter(before, after, expected) {
+  const ok = before && after && before.actualPick === after.actualPick;
+  const correct = !!(after && expected === 'correct' && after.actualPick);
+  return { same: ok, correct };
+}
+
+function computeRates(casesB) {
+  let institutionHit = 0, homonymFalsePick = 0, homonymReject = 0, homonymTotal = 0;
+  for (const c of casesB) {
+    if (c.kind === 'institution') {
+      if (c.after && c.after.actualPick) institutionHit++;
+    } else if (c.kind === 'homonym') {
+      homonymTotal++;
+      if (c.after && c.after.actualPick) homonymFalsePick++;
+      else homonymReject++;
+    }
+  }
+  return {
+    institutionHit,
+    homonymFalsePick,
+    homonymRejectRate: homonymTotal ? Math.round((homonymReject / homonymTotal) * 1000) / 1000 : null,
+  };
+}
+
+function commitOf(dir) {
+  try {
+    const { execSync } = require('child_process');
+    return execSync('git rev-parse --short HEAD', { cwd: dir, encoding: 'utf8' }).trim();
+  } catch (e) { return null; }
+}
+
+function runOnce(opts, matcher) {
+  const data = readCases(opts.cases);
+  const cases = { A: [], B: [], C: null, top1Diff: 0 };
+  for (const c of data.A || []) {
+    const r = pickTop1(matcher, c, opts.kp, opts.ks);
+    cases.A.push({
+      id: c.id, steleName: c.steleName, expected: c.expected,
+      ...(r.pick || { actualPick: null, score: null, source: c.route || null, sim: null, simAdj: null, dist: null }),
+      topCandidates: r.dump.slice(0, 5),
+    });
+  }
+  for (const c of data.B || []) {
+    const r = pickTop1(matcher, c, opts.kp, opts.ks);
+    cases.B.push({
+      id: c.id, steleName: c.steleName, kind: c.kind, expected: c.expected,
+      ...(r.pick || { actualPick: null, score: null, source: c.route || null, sim: null, simAdj: null, dist: null }),
+    });
+  }
+  if (Array.isArray(data.C) && data.C.length) {
+    const c = data.C[0];
+    const r = pickTop1(matcher, c, opts.kp, opts.ks);
+    cases.C = {
+      id: c.id, steleName: c.steleName,
+      before: c.before && Object.keys(c.before).length ? c.before : null,
+      after: r.pick,
+    };
+  }
+  return cases;
+}
+
+function diffTop1(before, after) {
+  let diff = 0;
+  const pairs = [];
+  for (const k of ['A', 'B']) {
+    const b = new Map((before[k] || []).map(x => [x.id, x.actualPick]));
+    for (const a of after[k] || []) {
+      const p = b.has(a.id) ? b.get(a.id) : undefined;
+      if (p !== a.actualPick) diff++;
+      pairs.push({ id: a.id, before: p == null ? null : p, after: a.actualPick, same: p === a.actualPick });
+    }
+  }
+  return { diff, pairs };
+}
+
+function summarizeA(cases) {
+  const counts = { correct: 0, wrong: 0, unmatched: 0 };
+  for (const c of cases) {
+    if (!c.actualPick) counts.unmatched++;
+    else if (c.expected === 'correct') counts.correct++;
+    else counts.wrong++;
+  }
+  return counts;
+}
+
+function mdTable(rows) {
+  if (!rows.length) return '_无案例_';
+  const head = '| id | stele | before top1 | after top1 | 一致 |\n|---|---|---|---|---|';
+  return head + '\n' + rows.map(r => `| ${r.id} | ${r.steleName} | ${r.before == null ? '（未匹配）' : r.before} | ${r.after == null ? '（未匹配）' : r.after} | ${r.same ? '是' : '**否**'} |`).join('\n');
+}
+
+function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  if (!opts.stage || !['L', 'S'].includes(opts.stage)) usage('--stage 必须是 L 或 S');
+  if (!Number.isFinite(opts.kp) || !Number.isFinite(opts.ks) || !Number.isFinite(opts.strong)) {
+    usage('--kp / --ks / --strong 必须显式给数值（无隐藏默认值）');
+  }
+  if (!opts.out) usage('--out 必传');
+  if (opts.sweep && opts.stage === 'L') usage('--sweep 属阶段 S（KP/KS 惩罚尚未引入），阶段 L 不适用');
+
+  const afterMatcher = loadMatcher(SRC);
+  const beforeMatcher = opts.beforeSrc ? loadMatcher(opts.beforeSrc) : afterMatcher;
+
+  const outDir = path.resolve(opts.out);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const grid = [];
+  if (opts.sweep) {
+    for (let kp = 0.02; kp <= 0.0801; kp += 0.01) {
+      for (let ks = 0.01; ks <= 0.0501; ks += 0.01) {
+        grid.push({ kp: Math.round(kp * 100) / 100, ks: Math.round(ks * 100) / 100 });
+      }
+    }
+  } else {
+    grid.push({ kp: opts.kp, ks: opts.ks });
+  }
+
+  const sweepRows = [];
+  let firstResult = null;
+  for (const g of grid) {
+    const after = runOnce({ ...opts, kp: g.kp, ks: g.ks }, afterMatcher);
+    const before = opts.beforeSrc ? runOnce({ ...opts, kp: g.kp, ks: g.ks }, beforeMatcher) : after;
+    const d = diffTop1(before, after);
+    if (!firstResult) firstResult = { after, before, d, params: g };
+    sweepRows.push({ kp: g.kp, ks: g.ks, A: summarizeA(after.A), B: computeRates(after.B), top1Diff: d.diff });
+  }
+
+  const hard = [];
+  if (!firstResult) hard.push('没有可执行案例');
+  const top1Diff = firstResult ? firstResult.d.diff : 0;
+  if (top1Diff !== 0) hard.push('top1 差异 ' + top1Diff + ' 条（硬约束要求 0）');
+  // 阶段 L 的核心命题是「改动前后行为不变」，缺改前源码就无法证明；阶段 S 是扫参，不强求。
+  if (opts.stage === 'L' && !opts.beforeSrc) hard.push('未提供 --before-src：无法证明「改动前后」（当前 before 与 after 是同一份源码）');
+
+  const result = {
+    stage: opts.stage,
+    params: { kp: opts.kp, ks: opts.ks, floorP: 0.35, floorS: 0.6, strong: opts.strong },
+    commit: commitOf(ROOT),
+    A: { counts: summarizeA(firstResult ? firstResult.after.A : []), cases: firstResult ? firstResult.after.A : [] },
+    B: {
+      counts: computeRates(firstResult ? firstResult.after.B : []),
+      cases: firstResult ? firstResult.after.B : [],
+    },
+    C: firstResult ? firstResult.after.C : { before: null, after: null },
+    D: { suites: [], total: 0, pass: 0, fail: 0, note: '由 npm test 产出，本脚本不代跑' },
+    top1Diff,
+    beforeAfter: firstResult ? firstResult.d.pairs : [],
+    metadata: {
+      generatedAt: new Date().toISOString(),
+      cases: path.relative(ROOT, opts.cases),
+      beforeSrc: opts.beforeSrc ? path.relative(ROOT, opts.beforeSrc) : null,
+      sweep: opts.sweep,
+      stageNote: opts.stage === 'L'
+        ? '阶段 L：只验证日志/可解释性改动不影响 top1；KP/KS 不参与打分（simAdj=sim）'
+        : '阶段 S：KP/KS 参与评分（由后续 commit 实现；当前 matcher 未变更时不生效）',
+    },
+  };
+  if (opts.sweep && sweepRows.length !== 35) hard.push('扫参组数 ' + sweepRows.length + ' ≠ 35');
+
+  fs.writeFileSync(path.join(outDir, 'result.json'), JSON.stringify(result, null, 2));
+
+  const md = [
+    '# 匹配回测报告（' + opts.stage + ' 阶段）',
+    '',
+    '- 生成时间：' + result.metadata.generatedAt,
+    '- 参数：kp=' + opts.kp + '，ks=' + opts.ks + '，strong=' + opts.strong + '，floorP=0.35，floorS=0.6',
+    '- 数据集：`' + result.metadata.cases + '`' + (result.metadata.beforeSrc ? '；改前源码：`' + result.metadata.beforeSrc + '`' : ''),
+    '- top1 差异：**' + top1Diff + '** 条（硬约束 = 0）',
+    '- 说明：' + result.metadata.stageNote,
+    '',
+    '## A 集（' + result.A.counts.correct + ' 正确 / ' + result.A.counts.wrong + ' 错误 / ' + result.A.counts.unmatched + ' 未匹配）',
+    '',
+    mdTable(firstResult ? firstResult.d.pairs.filter(p => (firstResult.after.A || []).some(a => a.id === p.id)) : []),
+    '',
+    '## B 集（机构命中 ' + result.B.counts.institutionHit + ' / 远同名误选 ' + result.B.counts.homonymFalsePick + ' / 拒识率 ' + result.B.counts.homonymRejectRate + '）',
+    '',
+    '| id | stele | 期望 | after top1 |',
+    '|---|---|---|---|',
+    ...(result.B.cases.length ? result.B.cases.map(c => `| ${c.id} | ${c.steleName} | ${c.expected} | ${c.actualPick == null ? '（未匹配）' : c.actualPick} |`) : ['_无案例_']),
+    '',
+    '## C 集（用户案例 P13）',
+    '',
+    result.C ? 'before: `' + JSON.stringify(result.C.before) + '`\n\nafter: `' + JSON.stringify(result.C.after) + '`' : '_无案例_',
+    '',
+  ];
+  if (opts.sweep) {
+    md.push('## 扫参 ' + sweepRows.length + ' 组', '', '| kp | ks | 正确 | 错误 | 未匹配 | 机构命中 | top1差异 |', '|---|---|---|---|---|---|---|');
+    for (const r of sweepRows) md.push(`| ${r.kp} | ${r.ks} | ${r.A.correct} | ${r.A.wrong} | ${r.A.unmatched} | ${r.B.institutionHit} | ${r.top1Diff} |`);
+    md.push('');
+  }
+  md.push('## 硬约束', '');
+  md.push(hard.length ? hard.map(h => '- ❌ ' + h).join('\n') : '- ✅ 全部满足');
+  fs.writeFileSync(path.join(outDir, 'report.md'), md.join('\n') + '\n');
+
+  console.log('result.json → ' + path.join(outDir, 'result.json'));
+  console.log('report.md   → ' + path.join(outDir, 'report.md'));
+  console.log('top1Diff=' + top1Diff + ' A=' + JSON.stringify(result.A.counts) + ' B=' + JSON.stringify(result.B.counts));
+  if (hard.length) {
+    console.error('硬约束未满足：\n- ' + hard.join('\n- '));
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+try { main(); } catch (e) {
+  console.error('回测失败：' + (e && e.stack || e));
+  process.exit(1);
+}
