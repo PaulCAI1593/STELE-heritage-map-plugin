@@ -2,6 +2,32 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.1] — 2026-11-05
+
+### 弹窗宽度按屏幕自适应
+
+此前弹窗固定 400px 宽，4K 屏上偏窄。现在按屏幕宽度取档：≥2560 → 560、≥1920 → 520、≥1536 → 480、≥1280 → 440、其余 400。
+尺寸只由 `src/popup/popup-size.js` 决定：读 `screen.width` / `screen.availWidth` 后**只写一个 CSS 变量** `--hmp-popup-w`；
+CSS 里只有一处 `html,body{width:var(--hmp-popup-w,400px)}`——没有多档 media，也没有 `!important`。
+夹取规则 `min(档位, screen.availWidth - 40)`，上限 560、下限 400：可用宽度不够时宁可贴最小宽度，也不让窗口超出屏幕。
+不监听 `resize`：弹窗尺寸由 Chrome 打开时决定，改宽度会让整个窗口抖动。
+
+实测用 CDP 覆盖 `screenWidth`（不是只改 viewport）：1024/1280/1536/1920/2560/3840 六档，
+落到的宽度依次 400/440/480/520/560/560，`document.documentElement.scrollWidth` 始终 ≤ 窗口宽，无横向滚动、无元素裁切。
+六档合计 24 组读数（两态 × 两主题），内容高 508–548px，底栏完整可见，`pageErrors` 0。
+
+### 去掉底部留白
+
+删掉 `min-height:100vh`，短内容时窗口收缩到内容高度，不再留出空白。
+长内容（内容 566px > 窗口 400px）在弹窗内滚动；页脚改 `position:sticky; bottom:0` 贴住窗口底，滚动条不压页脚。
+为此去掉了 `.popup` 的 `overflow:hidden`——祖先裁切会让 sticky 失效，且该规则原本只为圆角裁切服务（窗口化后圆角已归零）。
+`.popup` 底边到最后一个可见元素 13px（页脚 12px 外边距 + 1px），滚动到底时页脚底边与窗口底边重合（gap 0）。
+
+### 其它
+
+版本升 0.4.1（`manifest.json` / `package.json` 两处）；`DATA_VERSION` 未动（仍 46），缓存语义不变；`host_permissions` 未动。
+自动化测试 20 套 761 项全过。
+
 ## [0.4.0] — 2026-11-05
 
 ### 新界面 — 弹窗重做

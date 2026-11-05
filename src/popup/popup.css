@@ -6,7 +6,7 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 
 /* ---- 弹窗骨架（两主题完全一致，只换变量与材质层） ---- */
 .popup{width:100%;background-color:var(--hmp-surface);border-top:1px solid var(--hmp-border);
-  border-bottom:1px solid var(--hmp-border);overflow:hidden;border-radius:var(--hmp-r);
+  border-bottom:1px solid var(--hmp-border);border-radius:var(--hmp-r);
   box-shadow:var(--hmp-shadow)}
 .ph{display:flex;align-items:flex-start;gap:10px;padding:5px 12px 4px;position:relative}
 .ph-t{flex:1 1 auto;min-width:0}
@@ -123,7 +123,7 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 .upd-btn:hover{color:var(--hmp-primary-h)}
 .upd-btn:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px;border-radius:2px}
 .upd-btn[disabled]{color:var(--hmp-muted);cursor:default;text-decoration:none}
-.hmp-foot{margin:0 12px 12px;font-size:12px;line-height:1.4;color:var(--hmp-muted)}
+.hmp-foot{margin:0 12px 12px;font-size:12px;line-height:1.4;color:var(--hmp-muted);position:sticky;bottom:0;background:var(--hmp-page);padding-top:2px}
 
 @media (prefers-reduced-motion:reduce){.spin{animation:none}*{transition:none!important}}
 @media (max-width:359px){.band{flex-wrap:wrap}.band-m{max-width:100%;text-align:left}}
@@ -190,9 +190,8 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 
 /* ===== 扩展弹窗落地补丁（相对小样只做窗口化与行内测试行） ===== */
 html{background:var(--hmp-page)}
-body{width:380px;max-width:100vw;margin:0;background:var(--hmp-page)}
-@media (min-width:400px){body{width:400px}}
-.popup{min-height:100vh;border-radius:0;border-left:0;border-right:0}
+html,body{width:var(--hmp-popup-w,400px);margin:0;background:var(--hmp-page)}
+.popup{min-height:0;border-radius:0;border-left:0;border-right:0}
 [hidden]{display:none!important}
 
 /* Key 保存态小字（已保存·尾号 / 已修改·未保存 / 未配置） */
