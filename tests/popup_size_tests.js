@@ -83,8 +83,10 @@ check('不读 cookie、不发网络请求（只看可执行代码）', !/cookie|
 
 // ---------------- 5. CSS 与 HTML 接线 ----------------
 console.log('\n=== CSS 单一出口 / 旧写法已删 / 加载顺序 ===');
-check('存在 `html,body{width:min(var(--hmp-popup-w,400px),100vw)}` 且只一处（窄屏不横滚）',
-  (css.match(/html,body\{width:min\(var\(--hmp-popup-w,400px\),100vw\)/g) || []).length === 1);
+// #21：Chrome 扩展弹窗宽度由内容推出，100vw 会自指导致首帧锁窄（真机实测）——单一出口只用变量。
+check('存在唯一的 `html,body{width:var(--hmp-popup-w,400px)` 出口',
+  (css.match(/html,body\{width:var\(--hmp-popup-w,400px\)/g) || []).length === 1);
+check('popup.css 不含 100vw（含 min()/max-width 写法）', !/100vw/.test(css));
 check('不再有 width:380px', !css.includes('width:380px'));
 check('不再有 max-width:100vw', !css.includes('max-width:100vw'));
 check('不再有 min-height:100vh', !css.includes('min-height:100vh'));

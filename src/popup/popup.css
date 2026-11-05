@@ -190,7 +190,7 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 
 /* ===== 扩展弹窗落地补丁（相对小样只做窗口化与行内测试行） ===== */
 html{background:var(--hmp-page)}
-html,body{width:min(var(--hmp-popup-w,400px),100vw);margin:0;background:var(--hmp-page)}
+html,body{width:var(--hmp-popup-w,400px);margin:0;background:var(--hmp-page)}
 .popup{min-height:0;border-radius:0;border-left:0;border-right:0}
 [hidden]{display:none!important}
 

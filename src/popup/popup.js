@@ -702,6 +702,19 @@
     return null;
   }
 
+  /** #21：由远端信息与本机版本决定状态与文案（纯函数，便于四态测试）。 */
+  function decideUpdate(remote, local) {
+    if (!remote) return { state: 'error', text: '无法检查更新 · 请检查网络后重试' };
+    const cmp = compareVersions(remote.version, local);
+    const suffix = remote.viaMirror ? ' · 经镜像检查' : '';
+    if (cmp > 0) return { state: 'available', tag: remote.tag, url: remote.url, viaMirror: remote.viaMirror, text: '有新版本 ' + remote.tag + suffix };
+    const ahead = cmp < 0;
+    return {
+      state: 'latest', tag: remote.tag, viaMirror: remote.viaMirror, ahead,
+      text: (ahead ? '已领先上游 ' : '已是最新 · 上游 ') + remote.tag + suffix,
+    };
+  }
+
   function cacheUpdate(payload) {
     try {
       storageSet({ [UPDATE_CACHE_KEY]: Object.assign({ checkedAt: Date.now() }, payload) });
@@ -716,7 +729,9 @@
       if (fresh && c.state === 'available') {
         setUpd('available', '有新版本 ' + c.tag + (c.viaMirror ? ' · 经镜像检查' : ''), c);
       } else if (fresh && c.state === 'latest') {
-        setUpd('latest', '已是最新 · 上游 ' + c.tag + (c.viaMirror ? ' · 经镜像检查' : ''));
+        // 缓存里带 ahead/text（#21：本机 0.4.2 高于上游 0.4.1 时显示「已领先上游」，不能退回「已是最新」）
+        const text = c.text || ((c.ahead ? '已领先上游 ' : '已是最新 · 上游 ') + c.tag + (c.viaMirror ? ' · 经镜像检查' : ''));
+        setUpd('latest', text);
       }
     });
   }
@@ -739,22 +754,10 @@
       setUpd('error', '无法检查更新 · 请检查网络后重试');
       return { state: 'error' };
     }
-    const local = getVersion();
-    const cmp = compareVersions(remote.version, local);
-    if (cmp > 0) {
-      const payload = { state: 'available', tag: remote.tag, url: remote.url, viaMirror: remote.viaMirror };
-      setUpd('available', '有新版本 ' + remote.tag + (remote.viaMirror ? ' · 经镜像检查' : ''), payload);
-      cacheUpdate(payload);
-      return payload;
-    }
-    const latestPayload = { state: 'latest', tag: remote.tag, viaMirror: remote.viaMirror };
-    if (cmp === 0) {
-      setUpd('latest', '已是最新 · 上游 ' + remote.tag + (remote.viaMirror ? ' · 经镜像检查' : ''));
-    } else {
-      setUpd('latest', '已领先上游 ' + remote.tag + (remote.viaMirror ? ' · 经镜像检查' : ''));
-    }
-    cacheUpdate(latestPayload);
-    return latestPayload;
+    const decision = decideUpdate(remote, getVersion());
+    setUpd(decision.state, decision.text, decision);
+    cacheUpdate(decision);
+    return decision;
   }
 
   // ---------------- 绑定 ----------------
@@ -817,7 +820,7 @@
     theme: { get: getTheme, set: applyTheme, normalize: normalizeTheme, KEY: THEME_KEY, default: DEFAULT_THEME },
     state: { get: () => currentState, render: renderState, compute: computeState },
     version: { get: getVersion, compare: compareVersions, parse: parseUpdate, asset: DOWNLOAD_ASSET, page: RELEASE_PAGE },
-    update: { check: checkUpdate, set: setUpd, cacheKey: UPDATE_CACHE_KEY, repo: UPDATE_REPO, api: UPDATE_API, mirror: UPDATE_MIRROR, ttl: UPDATE_TTL_MS },
+    update: { check: checkUpdate, set: setUpd, decide: decideUpdate, restore: restoreUpdateCache, cacheKey: UPDATE_CACHE_KEY, repo: UPDATE_REPO, api: UPDATE_API, mirror: UPDATE_MIRROR, ttl: UPDATE_TTL_MS },
     test: {
       one: testOne, all: testKeys, classify: classifyError, providers: PROVIDERS, reset: resetRes,
       keyTest: {
