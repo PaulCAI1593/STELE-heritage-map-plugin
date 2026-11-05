@@ -187,6 +187,44 @@
   }
 
   /**
+   * 「三路证据」一行文字：名称/地址/坐标各自的候选数与最高相似度。
+   *
+   * 数据只来自 matcher.pick 的 opts.dump / 各路自己的打分结果，
+   * **不改 pick 的算法与阈值**；这里出现的阈值一律读现有常量。
+   *
+   * @param {object|null} ev { name:{candCount,bestSim}, address:{...}, nearby:{...} }
+   * @returns {string} 空串表示本轮没有可展示的统计
+   */
+  function formatEvidence(ev) {
+    if (!ev) return '';
+    const parts = [];
+    const fmt = v => (Number.isFinite(v) ? v.toFixed(2) : '—');
+    const push = (label, o, strongable) => {
+      if (!o || !Number.isFinite(o.candCount)) return;
+      let one = label + ' ' + o.candCount + ' 候选（最高 ' + fmt(o.bestSim);
+      if (strongable && Number.isFinite(o.bestSim) && o.bestSim >= NAME_STRONG_SIM) {
+        one += '，达强证据线 ' + NAME_STRONG_SIM;
+      }
+      parts.push(one + '）');
+    };
+    push('名称', ev.name, true);
+    push('地址', ev.address, false);
+    push('坐标', ev.nearby);
+    if (!parts.length) return '';
+    let text = '三路证据：' + parts.join(' · ');
+    if (text.length > 150) text = text.slice(0, 149) + '…';
+    return text;
+  }
+
+  /** 证据行：命中态用小字灰字，未命中也必须显示（解释"为什么没匹配上"） */
+  function buildEvidenceNote(text, small) {
+    if (!text) return null;
+    const attrs = { className: 'hmp-note' + (small ? ' hmp-evidence' : '') };
+    if (small) attrs.style = 'font-size:12px;opacity:.78;';
+    return el('div', attrs, text);
+  }
+
+  /**
    * 单点位卡片。
    * state.kind: 'loading' | 'no-config' | 'error' | 'not-found' | 'found'
    *
@@ -206,6 +244,7 @@
     if (state.kind === 'not-found') {
       return buildSection(state, [
         buildNote(missingNote(state.failureKind)),
+        buildEvidenceNote(state.evidenceText, false),
         buildFallbackLinks(state.amapSearchUrl, state.baiduSearchUrl),
       ]);
     }
@@ -272,6 +311,9 @@
       children.push(el('div', { className: 'hmp-note' },
         '地图上同名点位：' + matchedName + distTxt));
     }
+
+    // 三路证据（小字）：名称/地址/坐标各有多少候选、最高相似度多少
+    children.push(buildEvidenceNote(state.evidenceText, true));
 
     if (rows.length) {
       children.push(buildTable(rows));
@@ -788,7 +830,7 @@
    * 变体按"从具体到宽泛"逐个尝试；达到 EARLY_ACCEPT_SIM 提前结束。
    * @returns {Promise<{matched, info, provider}|null>}
    */
-  async function searchByName(cfg, provider, poi) {
+  async function searchByName(cfg, provider, poi, ev) {
     const api = window.HMP.apis[provider];
     const region = poi.city || '';
     const variants = (poi.searchTerms && poi.searchTerms.length
@@ -912,6 +954,7 @@
       }
     }
 
+    if (ev) { ev.candCount = seen.size; ev.bestSim = best ? best.sim : 0; }
     if (!best) {
       if (tried > 0 && errored === tried) throw lastErr;   // 全是请求失败
       console.log('[HMP]', provider, '名称检索无可用匹配');
@@ -937,7 +980,7 @@
    *
    * @returns {Promise<{poi, dist, info, provider, matchType}|null>}
    */
-  async function searchNearby(cfg, provider, poi) {
+  async function searchNearby(cfg, provider, poi, ev) {
     const api = window.HMP.apis[provider];
     const geo = window.HMP.geo;
     if (!geo || !poi.gcj) return null;
@@ -968,6 +1011,7 @@
       throw e;      // 请求失败 ≠ 没搜到，必须让上层区分开
     }
     if (!candidates || !candidates.length) {
+      if (ev) { ev.candCount = 0; ev.bestSim = 0; }
       console.log('[HMP]', provider, '周边检索（半径 ' + NEARBY_RADIUS + 'm）无候选');
       return null;
     }
@@ -986,7 +1030,10 @@
       console.log('[HMP]', provider, '周边检索已排除 ' + dropped.length +
         ' 个设施/门址：' + dropped.slice(0, 3).map(c => c.name).join(' / '));
     }
-    if (!usable.length) return null;
+    if (!usable.length) {
+      if (ev) { ev.candCount = candidates.length; ev.bestSim = 0; }
+      return null;
+    }
 
     // 参考点必须与候选坐标系一致：
     //   高德 → 恒为 GCJ02，故用 poi.gcj
@@ -1035,6 +1082,7 @@
 
     scored.sort((a, b) => b.score - a.score);
     const best = scored[0];
+    if (ev) { ev.candCount = candidates.length; ev.bestSim = best.nameSim; }
     console.log('[HMP]', provider, '位置命中："' + best.poi.name +
       '"，直线 ' + Math.round(best.dist) + 'm，名称相似度 ' + best.nameSim.toFixed(3) +
       (best.isSub ? '（子单元，已降权）' : ''));
@@ -1058,7 +1106,7 @@
    *
    * @returns {Promise<{matched, info, provider, matchType}|null>}
    */
-  async function searchByAddress(cfg, provider, poi) {
+  async function searchByAddress(cfg, provider, poi, ev) {
     let q = poi.addrQuery;
     if (!q) return null;
 
@@ -1169,6 +1217,7 @@
     });
     scored.sort((a, b) => (b.score - a.score) || (a.dist - b.dist));
     const best = scored[0];
+    if (ev) { ev.candCount = usable.length; ev.bestSim = best.nameSim; }
     console.log('[HMP]', provider, '地址命中："' + best.poi.name + '"' +
       (Number.isFinite(best.dist) ? '，直线 ' + Math.round(best.dist) + 'm' : '') +
       '，名称相似度 ' + best.nameSim.toFixed(3));
@@ -1218,28 +1267,32 @@
       const useGeo = !probeOnly && (mode === 'combine' || mode === 'geo') && !poi.noGeoFallback;
 
       let byName = null, byAddr = null, byGeo = null;
+      // 三路证据统计（只读候选数与最高相似度，不改匹配逻辑）
+      const ev = { name: {}, address: {}, nearby: {} };
       // 记录这一家失败/无果的**具体**原因，供卡片上说明"为什么回退"。
       // 否则只能笼统说"未返回结果"，无法区分"请求报错""没搜到""搜到但没通过校验"。
       const why = [];
       // 记录这一家是否发生过"请求超时"：超时与"没搜到"对用户含义不同，
       // 卡片文案必须分开（见 classifyFailure / missingNote）。
       const timeouts = {};
-      if (useName) { try { byName = await searchByName(cfg, provider, poi); } catch (e) {
+      if (useName) { try { byName = await searchByName(cfg, provider, poi, ev.name); } catch (e) {
         why.push('名称检索失败：' + e.message);
         if (e && e.code === 'HMP_TIMEOUT') timeouts.name = true;
         console.warn('[HMP]', provider, '名称检索异常：', e.message);
       } }
-      if (useAddr) { try { byAddr = await searchByAddress(cfg, provider, poi); } catch (e) {
+      if (useAddr) { try { byAddr = await searchByAddress(cfg, provider, poi, ev.address); } catch (e) {
         why.push('地址检索失败：' + e.message);
         if (e && e.code === 'HMP_TIMEOUT') timeouts.address = true;
         console.warn('[HMP]', provider, '地址检索异常：', e.message);
       } }
-      if (useGeo) { try { byGeo = await searchNearby(cfg, provider, poi); } catch (e) {
+      if (useGeo) { try { byGeo = await searchNearby(cfg, provider, poi, ev.nearby); } catch (e) {
         why.push('坐标检索失败：' + e.message);
         if (e && e.code === 'HMP_TIMEOUT') timeouts.geo = true;
         console.warn('[HMP]', provider, '坐标检索异常：', e.message);
       } }
       if (diag) {
+        diag.evidence = diag.evidence || {};
+        diag.evidence[provider] = ev;
         const got = [byName && '名称', byAddr && '地址', byGeo && '坐标'].filter(Boolean);
         diag.providerNotes = diag.providerNotes || {};
         diag.timeouts = diag.timeouts || {};
@@ -1696,6 +1749,7 @@
       // 表现为"我把百度 Key 填好了，怎么还是高德"。
       // 写成 amap 键后，下次仍会按用户首选重新试百度，能自愈。
       const cacheProvider = result.provider || diag.usedProvider || cfg.defaultProvider;
+      payload.evidenceText = formatEvidence(diag.evidence && diag.evidence[cacheProvider]);
       await window.HMP.cache.set(
         cacheProvider, poi.name, poi.adminLast || '', payload
       );
@@ -1704,7 +1758,10 @@
       const missProvider = diag.usedProvider || cfg.defaultProvider;
       // 失败也分三种：超时 / 有候选但未通过校验 / 三路都没候选（见 missingNote）
       const failureKind = classifyFailure(diag, diag.usedProvider);
-      const missPayload = { matched: null, provider: missProvider, fallbackNote, failureKind };
+      const missPayload = {
+        matched: null, provider: missProvider, fallbackNote, failureKind,
+        evidenceText: formatEvidence(diag.evidence && diag.evidence[missProvider]),
+      };
       // 负结果只缓存 1 小时（见 cache.setNegative）
       await window.HMP.cache.setNegative(
         missProvider, poi.name, poi.adminLast || '', missPayload
@@ -1737,6 +1794,7 @@
         closureProbe: cacheData.closureProbe || null,
         siteName: poi.name,
         amapSearchUrl, baiduSearchUrl,
+        evidenceText: cacheData.evidenceText || '',
         featureType: poi.featureType
       });
     } else {
@@ -1747,6 +1805,7 @@
         providerLabel: cacheData.provider === 'amap' ? '高德地图' : '百度地图',
         fallbackNote: cacheData.fallbackNote || '',
         failureKind: cacheData.failureKind || null,
+        evidenceText: cacheData.evidenceText || '',
         amapSearchUrl, baiduSearchUrl,
         featureType: poi.featureType
       });
@@ -2047,6 +2106,7 @@
     // 失败原因分类与文案（条目 1：区分超时 / 未通过校验 / 无候选）
     classifyFailure,
     missingNote,
+    formatEvidence,
     findContainer,
     panelGone,
     removeCard,

@@ -8,6 +8,25 @@ const path = require('path');
 const SRC = path.join(__dirname, '..', 'src');
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
 
+/** 在元素树里按 '#id' / '.class' 找元素（测试桩用） */
+function queryAll(root, sel) {
+  const out = [];
+  const key = String(sel || '').trim();
+  const walk = n => {
+    if (!n || n.nodeType !== 1) return;
+    const kids = n.children || [];
+    for (const c of kids) {
+      if (c.nodeType === 1) {
+        if (key[0] === '#' && c.id === key.slice(1)) out.push(c);
+        else if (key[0] === '.' && (' ' + c.className + ' ').indexOf(' ' + key.slice(1) + ' ') >= 0) out.push(c);
+        walk(c);
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
 class El {
   constructor(t) {
     this.tagName = String(t).toUpperCase(); this.children = []; this.parentNode = null;
@@ -30,7 +49,8 @@ class El {
   get textContent() { return this._text; } set textContent(v) { this._text = String(v); }
   get innerHTML() { return this._html; } set innerHTML(v) { this._html = v; }
   addEventListener() {} matches() { return false; }
-  querySelector() { return null; } querySelectorAll() { return []; }
+  querySelector(sel) { return queryAll(this, sel)[0] || null; }
+  querySelectorAll(sel) { return queryAll(this, sel); }
 }
 
 /** 建立全局桩。opts.chrome=false 时删除 chrome（测直连路径）。 */
@@ -50,9 +70,9 @@ function setup(opts) {
     body: docBody,
     createElement: t => new El(t),
     createTextNode: t => ({ nodeType: 3, textContent: t }),
-    getElementById: id => (id === 'poi-basic-info-section' ? basicEl : null),
-    querySelector: s => (s === '.modal-body' ? modalBody : null),
-    querySelectorAll: () => [],
+    getElementById: id => (id === 'poi-basic-info-section' ? basicEl : (queryAll(docBody, '#' + id)[0] || null)),
+    querySelector: s => (s === '.modal-body' ? modalBody : (queryAll(docBody, s)[0] || null)),
+    querySelectorAll: s => queryAll(docBody, s),
     addEventListener: () => {},
   };
   global.window.addEventListener = () => {};
