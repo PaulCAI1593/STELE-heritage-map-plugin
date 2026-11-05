@@ -126,9 +126,12 @@ function pickTop1(matcher, c, kp, ks) {
   };
 }
 
+let LAST_META = {};
+
 function readCases(file) {
   if (!fs.existsSync(file)) throw new Error('找不到数据集：' + file);
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  LAST_META = data.meta || {};
   for (const k of ['A', 'B', 'C']) {
     if (data[k] != null && !Array.isArray(data[k])) throw new Error('数据集 ' + k + ' 必须是数组');
   }
@@ -144,6 +147,9 @@ function classifyABeforeAfter(before, after, expected) {
 function computeRates(casesB, matcher) {
   let institutionHit = 0, homonymFalsePick = 0, homonymReject = 0, homonymTotal = 0;
   let facilityHit = 0;
+  // D-081③：歧义同名点（meta.homonymAmbiguous，如 B13）单列，不计拒识率分母。
+  const ambiguousIds = new Set(Array.isArray(LAST_META.homonymAmbiguous) ? LAST_META.homonymAmbiguous : []);
+  const homonymAmbiguous = [];
   for (const c of casesB) {
     // runOnce 写的是扁平字段（actualPick 在顶层）；旧版读 c.after.* 恒为 undefined，
     // 导致 B 集机构/同名命中永远统计为 0（总监复验时发现的口径问题）。
@@ -154,6 +160,10 @@ function computeRates(casesB, matcher) {
       // 设施点不算“机构命中”（它是本体的服务设施，不是办事机构）
       if (pickName && !fac) institutionHit++;
     } else if (c.kind === 'homonym') {
+      if (ambiguousIds.has(c.id)) {
+        homonymAmbiguous.push({ id: c.id, steleName: c.steleName, actualPick: pickName == null ? null : pickName });
+        continue;
+      }
       homonymTotal++;
       if (pickName && !fac) homonymFalsePick++;
       else homonymReject++;
@@ -163,6 +173,9 @@ function computeRates(casesB, matcher) {
     institutionHit,
     homonymFalsePick,
     facilityHit,
+    homonymAmbiguous,
+    homonymTotal,
+    homonymReject,
     homonymRejectRate: homonymTotal ? Math.round((homonymReject / homonymTotal) * 1000) / 1000 : null,
   };
 }
@@ -289,6 +302,7 @@ function main() {
   const hard = [];
   if (!firstResult) hard.push('没有可执行案例');
   const top1Diff = firstResult ? firstResult.d.diff : 0;
+  const changedIds = firstResult ? firstResult.d.pairs.filter(p => !p.same).map(p => p.id) : [];
   // 阶段 L 的核心命题是「行为不变」；阶段 S 就是要改变 top1，不以此判失败。
   if (opts.stage === 'L' && top1Diff !== 0) hard.push('top1 差异 ' + top1Diff + ' 条（硬约束要求 0）');
   // 阶段 L 的核心命题是「改动前后行为不变」，缺改前源码就无法证明；阶段 S 是扫参，不强求。
@@ -306,6 +320,10 @@ function main() {
     C: firstResult ? firstResult.after.C : { before: null, after: null },
     D: { suites: [], total: 0, pass: 0, fail: 0, note: '由 npm test 产出，本脚本不代跑' },
     top1Diff,
+    // #19：S 阶段把差异定位成「预期」并给出 id；L 阶段仍以 0 为硬约束。
+    expectedDiff: opts.stage === 'S'
+      ? { count: top1Diff, ids: changedIds, note: '设施硬压带来的改善/未匹配，不作硬约束' }
+      : null,
     beforeAfter: firstResult ? firstResult.d.pairs : [],
     metadata: {
       generatedAt: new Date().toISOString(),
@@ -389,19 +407,28 @@ function main() {
     '- 生成时间：' + result.metadata.generatedAt,
     '- 参数：kp=' + opts.kp + '，ks=' + opts.ks + '，strong=' + opts.strong + '，floorP=0.35，floorS=0.6',
     '- 数据集：`' + result.metadata.cases + '`' + (result.metadata.beforeSrc ? '；改前源码：`' + result.metadata.beforeSrc + '`' : ''),
-    '- top1 差异：**' + top1Diff + '** 条（硬约束 = 0）',
+    opts.stage === 'L'
+      ? '- top1 差异：**' + top1Diff + '** 条（硬约束 = 0）'
+      : '- 预期差异：**' + top1Diff + '** 条（' + (changedIds.length ? changedIds.join('、') : '无') + '；设施硬压带来的改善/未匹配，不作硬约束）',
     '- 说明：' + result.metadata.stageNote,
     '',
     '## A 集（' + result.A.counts.correct + ' 正确 / ' + result.A.counts.wrong + ' 错误 / ' + result.A.counts.unmatched + ' 未匹配 / ' + result.A.counts.facilityHit + ' 设施误配）',
     '',
     mdTable(firstResult ? firstResult.d.pairs.filter(p => (firstResult.after.A || []).some(a => a.id === p.id)) : []),
     '',
-    '## B 集（机构命中 ' + result.B.counts.institutionHit + ' / 设施命中 ' + result.B.counts.facilityHit + ' / 远同名误选 ' + result.B.counts.homonymFalsePick + ' / 拒识率 ' + result.B.counts.homonymRejectRate + '）',
+    '## B 集（机构命中 ' + result.B.counts.institutionHit + ' / 设施命中 ' + result.B.counts.facilityHit + ' / 远同名误选 ' + result.B.counts.homonymFalsePick
+      + ' / 拒识率 ' + result.B.counts.homonymRejectRate + ' = 拒绝 ' + result.B.counts.homonymReject + ' / 有效 ' + result.B.counts.homonymTotal
+      + '；歧义同名单列 ' + ((result.B.counts.homonymAmbiguous || []).length) + ' 条不计分母）',
     '',
     '| id | stele | 期望 | after top1 |',
     '|---|---|---|---|',
     ...(result.B.cases.length ? result.B.cases.map(c => `| ${c.id} | ${c.steleName} | ${c.expected} | ${c.actualPick == null ? '（未匹配）' : c.actualPick} |`) : ['_无案例_']),
     '',
+    ...((result.B.counts.homonymAmbiguous || []).length
+      ? ['### 歧义同名（不计入拒识率分母）', '',
+         '| id | stele | after top1 |', '|---|---|---|',
+         ...result.B.counts.homonymAmbiguous.map(a => '| ' + a.id + ' | ' + a.steleName + ' | ' + (a.actualPick == null ? '（未匹配）' : a.actualPick) + ' |'), '']
+      : []),
     '## C 集（用户案例 P13）',
     '',
     result.C ? 'before: `' + JSON.stringify(result.C.before) + '`\n\nafter: `' + JSON.stringify(result.C.after) + '`' : '_无案例_',
@@ -412,7 +439,7 @@ function main() {
     for (const r of sweepRows) md.push(`| ${r.kp} | ${r.ks} | ${r.A.correct} | ${r.A.wrong} | ${r.A.unmatched} | ${r.B.institutionHit} | ${r.top1Diff} |`);
     md.push('');
   }
-  md.push('## 硬约束', '');
+  md.push(opts.stage === 'S' ? '## 硬约束（S 阶段不含 top1 差异）' : '## 硬约束', '');
   md.push(hard.length ? hard.map(h => '- ❌ ' + h).join('\n') : '- ✅ 全部满足');
   fs.writeFileSync(path.join(outDir, 'report.md'), md.join('\n') + '\n');
 
