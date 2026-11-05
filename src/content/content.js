@@ -40,7 +40,7 @@
 
   function dispatchFeature(feature, source, steleId) {
     if (!feature || !feature.name) return;
-    if (steleId) publishedSteleId = steleId;
+    publishedSteleId = steleId || null;
     toast('获取点位成功（来源：' + source + '）：' + feature.name);
     // detail 仍是原始 feature，事件形状不变（card.js 现有监听无需改）
     window.dispatchEvent(new CustomEvent('hmp:poi-loaded', { detail: feature }));

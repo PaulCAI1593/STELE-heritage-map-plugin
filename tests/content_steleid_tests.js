@@ -74,5 +74,15 @@ function makeSandbox() {
     JSON.stringify(Object.keys(ev.detail || {}).sort()) === JSON.stringify(['address', 'feature_type', 'name']),
     JSON.stringify(Object.keys(ev.detail || {})));
 
+  // #33 防回归：无 id 的兜底派发（路由认不出）必须清空旧 id，不得把 A 的 id 带到 B 上
+  sandbox.location.pathname = '/zhcn/about';           // 路由认不出 → 路径①的无 id 兜底派发
+  await sandbox.fetch('/api/v1/feature/def');
+  await new Promise(r => setTimeout(r, 20));
+  check('无 id 派发后 currentSteleId() 不返回旧 id（回退 URL / null）',
+    HMP.content.currentSteleId() === null && HMP.content.currentSteleId() !== 'abc',
+    String(HMP.content.currentSteleId()));
+  check('无 id 派发不影响事件形状（detail 仍是原始 feature、无 id 字段）',
+    events.length === 2 && ev.detail && ev.detail.name === '故宫' && !('steleId' in ev.detail));
+
   finish();
 })();
