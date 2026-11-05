@@ -760,6 +760,569 @@
     return decision;
   }
 
+  // ---------------- 收藏页（#32b） ----------------
+  // 视图完全由 items+groups+query+scope+activeGroupId 派生；删除先落盘再移除 UI，
+  // 撤销窗口 5 秒（首次删除起算，连删合并计数，窗口不重置）。
+  const FAV_GROUP_DEFAULT = 'g-default';
+  const FAV_UNDO_MS = 5000;
+  const FAV_SEARCH_DEBOUNCE = 150;
+
+  let activeTab = 'fav';
+  let favActiveGroup = FAV_GROUP_DEFAULT;
+  let favScope = 'group';
+  let favQuery = '';
+  let favUndo = null;          // {items:[{item, groupId}], expiresAt, timer}
+  let favSearchTimer = null;
+  let favMovingId = null;
+  let favHint = null;          // {kind, text, actGroupId?}
+  let favGroupsCache = [];     // 最近一次渲染用的分组表（供改名预填）
+
+  function favStore() { return (window.HMP && window.HMP.favoritesStore) || null; }
+
+  function pad2(n) { return String(n).length < 2 ? '0' + n : String(n); }
+
+  function formatSavedAt(ts) {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' 收藏';
+  }
+
+  /** D-115：深链单一出口；拿不到 id 时退化为站内搜索（调用方决定） */
+  function buildDeepLink(steleId) {
+    return steleId ? 'https://stele.geogv.org/zhcn/geo/' + encodeURIComponent(steleId) : '';
+  }
+
+  function buildSearchLink(name) {
+    return 'https://stele.geogv.org/zhcn/search?keyword=' + encodeURIComponent(name || '');
+  }
+
+  function openExternal(url) {
+    if (!url) return;
+    try { chrome.tabs.create({ url }); } catch (e) { window.open(url, '_blank'); }
+  }
+
+  function openFavorite(item) {
+    openExternal(buildDeepLink(item.steleId) || buildSearchLink(item.name));
+  }
+
+  function amapUrlOf(item) {
+    try { return window.HMP.apis.amap.searchUrl(item.name); } catch (e) {
+      return 'https://uri.amap.com/search?keyword=' + encodeURIComponent(item.name || '');
+    }
+  }
+
+  function baiduUrlOf(item) {
+    const region = (item.admin && item.admin[0]) || '';
+    try { return window.HMP.apis.baidu.searchUrl(item.name, region); } catch (e) {
+      return 'https://map.baidu.com/search/' + encodeURIComponent(item.name || '');
+    }
+  }
+
+  function copyFavoriteName(item) {
+    const text = String(item.name || '');
+    const done = () => {
+      favHint = { kind: 'info', text: '已复制「' + text + '」' };
+      renderFavHint();
+      setTimeout(() => { if (favHint && favHint.kind === 'info') { favHint = null; renderFavHint(); } }, 1800);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, done);
+      return;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* 忽略 */ }
+    if (ta.remove) ta.remove();
+    done();
+  }
+
+  /** 纯函数：列表可见项（与 store.search 同口径：名称+地址子串、大小写不敏感） */
+  function filterFavorites(items, query, scope, groupId) {
+    const q = String(query == null ? '' : query).trim().toLowerCase();
+    let list = (items || []).filter(x => scope === 'all' || x.groupId === (groupId || FAV_GROUP_DEFAULT));
+    if (!q) return list;
+    return list.filter(x => {
+      const hay = [x.name, x.address].filter(Boolean).join('\n').toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+  }
+
+  function groupCounts(items) {
+    const out = {};
+    (items || []).forEach(x => { out[x.groupId] = (out[x.groupId] || 0) + 1; });
+    return out;
+  }
+
+  /** 撤销是否仍有效（纯函数，便于边界测试） */
+  function undoAlive(undo, now) {
+    return !!undo && now < undo.expiresAt;
+  }
+
+  function undoText(undo) {
+    return '已取消收藏 ' + (undo ? undo.items.length : 0) + ' 条';
+  }
+
+  function favErrorText(reason, info) {
+    if (reason === 'limit') return '收藏夹已满（上限 500 条），请先删除一些条目。';
+    if (reason === 'size') return '收藏数据过大（超过 1MB），请先删除一些条目。';
+    if (reason === 'schema') return '收藏数据版本不兼容，本次操作未写入。';
+    if (reason === 'storage') return '本地存储写入失败，请重试。';
+    if (reason === 'duplicate') return '已存在于「' + ((info && info.groupName) || '未分组') + '」';
+    if (reason === 'unknown-group') return '目标分组已不存在。';
+    if (reason === 'not-found') return '条目已不存在，请刷新。';
+    return '操作未完成，请重试。';
+  }
+
+  function showFavHint(kind, reason, info) {
+    favHint = { kind: kind || 'warn', text: favErrorText(reason, info), reason };
+    renderFavHint();
+  }
+
+  function clearFavHint() { favHint = null; renderFavHint(); }
+
+  function renderFavHint() {
+    const box = $('favHint');
+    if (!box) return;
+    const text = $('favHintText');
+    box.hidden = !favHint;
+    if (!favHint) return;
+    box.className = 'band ' + (favHint.kind === 'info' ? 'b-info' : 'b-warn');
+    if (text) text.textContent = favHint.text;
+  }
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function renderFavChips(groups, counts) {
+    const box = $('favChips');
+    if (!box) return;
+    box.innerHTML = '';
+    groups.forEach(g => {
+      const b = el('button', 'grp');
+      b.type = 'button';
+      b.setAttribute('data-g', g.id);
+      b.setAttribute('aria-pressed', String(g.id === favActiveGroup));
+      const t = el('span', 'gt', g.name);
+      t.title = g.name;
+      b.appendChild(t);
+      b.appendChild(el('span', 'n', String(counts[g.id] || 0)));
+      b.addEventListener('click', () => {
+        favActiveGroup = g.id;
+        favMovingId = null;
+        clearFavHint();
+        renderFavorites();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function renderFavScope() {
+    const g = $('scopeGroup'), a = $('scopeAll');
+    if (g) { g.setAttribute('aria-checked', String(favScope === 'group')); g.setAttribute('aria-pressed', String(favScope === 'group')); }
+    if (a) { a.setAttribute('aria-checked', String(favScope === 'all')); a.setAttribute('aria-pressed', String(favScope === 'all')); }
+  }
+
+  function renderFavItem(item, groups) {
+    const li = el('li', 'fav');
+    li.setAttribute('role', 'listitem');
+
+    const main = el('button', 'fav-main');
+    main.type = 'button';
+    main.setAttribute('aria-label', '定位：' + (item.name || '未命名'));
+    const l1 = el('span', 'fline1');
+    const name = el('span', 'fname', item.name || '未命名');
+    name.title = item.name || '';
+    const go = el('span', 'fgo', '定位 ›');
+    l1.appendChild(name); l1.appendChild(go);
+    main.appendChild(l1);
+
+    const metaText = [item.tier, item.address].filter(Boolean).join(' · ');
+    if (metaText) {
+      const meta = el('span', 'fmeta', metaText);
+      meta.title = metaText;
+      main.appendChild(meta);
+    }
+
+    const m = item.match || {};
+    const snapText = m.matchedName
+      ? '匹配到 ' + m.matchedName + (Number.isFinite(m.matchDist) ? ' · 直线约 ' + Math.round(m.matchDist) + ' 米' : '')
+      : (item.address || '');
+    const snap = el('span', 'fsnap');
+    const st = el('span', 'fsnap-t', snapText);
+    st.title = snapText;
+    snap.appendChild(st);
+    snap.appendChild(el('span', 'ftime', formatSavedAt(item.savedAt)));
+    main.appendChild(snap);
+
+    main.addEventListener('click', () => openFavorite(item));
+    li.appendChild(main);
+
+    const ops = el('div', 'fops');
+    const links = el('span', 'flinks');
+    [['高德', amapUrlOf(item)], ['百度', baiduUrlOf(item)]].forEach(pair => {
+      const b = el('button', 'flink', pair[0]);
+      b.type = 'button';
+      b.addEventListener('click', () => openExternal(pair[1]));
+      links.appendChild(b);
+    });
+    const copy = el('button', 'flink', '复制名称');
+    copy.type = 'button';
+    copy.addEventListener('click', () => copyFavoriteName(item));
+    links.appendChild(copy);
+    ops.appendChild(links);
+
+    const btns = el('span', 'fbtns');
+    const move = el('button', 'btn sec', '移动到…');
+    move.type = 'button';
+    move.setAttribute('aria-expanded', String(favMovingId === item.steleId));
+    move.addEventListener('click', () => {
+      favMovingId = favMovingId === item.steleId ? null : item.steleId;
+      renderFavorites();
+    });
+    btns.appendChild(move);
+
+    const del = el('button', 'btn sec danger', '取消收藏');
+    del.type = 'button';
+    del.addEventListener('click', () => removeFavorite(item));
+    btns.appendChild(del);
+    ops.appendChild(btns);
+    li.appendChild(ops);
+
+    if (favMovingId === item.steleId) li.appendChild(renderMoveRow(item, groups));
+    return li;
+  }
+
+  function renderMoveRow(item, groups) {
+    const box = el('div', 'move');
+    box.appendChild(el('p', 'move-t', '移动到分组'));
+    groups.filter(g => g.id !== item.groupId).forEach(g => {
+      const lab = el('label', 'opt');
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'fav-move-' + item.steleId;
+      input.value = g.id;
+      input.addEventListener('change', () => moveFavorite(item, g.id));
+      lab.appendChild(input);
+      lab.appendChild(el('span', 'oi', g.name));
+      box.appendChild(lab);
+    });
+    return box;
+  }
+
+  function renderFavEmpty(allItems, visible, groups) {
+    const box = $('favEmpty');
+    if (!box) return false;
+    const title = $('favEmptyTitle'), body = $('favEmptyBody');
+    const go = $('favEmptyGo'), clear = $('favEmptyClear');
+    const activeGroupObj = groups.find(g => g.id === favActiveGroup);
+    let show = false;
+    if (!allItems.length) {
+      show = true;
+      if (title) title.textContent = '还没有收藏';
+      if (body) body.textContent = '在地图详情页打开一个点位，点卡片上的「收藏」即可保存到这里。';
+      if (go) { go.hidden = false; go.textContent = '去配置 Key'; }
+      if (clear) clear.hidden = true;
+    } else if (favQuery.trim() && !visible.length) {
+      show = true;
+      if (title) title.textContent = '没有匹配的收藏';
+      if (body) body.textContent = '换个关键词试试，或把范围切到「全部」。';
+      if (go) go.hidden = true;
+      if (clear) clear.hidden = false;
+    } else if (!favQuery.trim() && !visible.length) {
+      show = true;
+      if (title) title.textContent = '「' + ((activeGroupObj && activeGroupObj.name) || '这个分组') + '」还是空的';
+      if (body) body.textContent = '切到「全部」能看到其它分组的收藏，或在卡片上收藏新点位后移动到本组。';
+      if (go) { go.hidden = false; go.textContent = '查看全部收藏'; }
+      if (clear) clear.hidden = true;
+    }
+    box.hidden = !show;
+    return show;
+  }
+
+  function renderFavUndo() {
+    const box = $('favUndo');
+    if (!box) return;
+    const alive = undoAlive(favUndo, Date.now());
+    box.hidden = !alive;
+    const t = $('favUndoText');
+    if (t) t.textContent = alive ? undoText(favUndo) : '';
+  }
+
+  /** 清空撤销窗口（切 Tab / 超时）；删除本身保留 */
+  function cancelFavUndo() {
+    if (favUndo && favUndo.timer) clearTimeout(favUndo.timer);
+    favUndo = null;
+    renderFavUndo();
+  }
+
+  function pushFavUndo(item, groupId) {
+    const now = Date.now();
+    if (!undoAlive(favUndo, now)) {
+      if (favUndo && favUndo.timer) clearTimeout(favUndo.timer);
+      favUndo = { items: [], expiresAt: now + FAV_UNDO_MS, timer: null };
+      favUndo.timer = setTimeout(() => {
+        favUndo = null;
+        renderFavUndo();
+        const list = $('favList');
+        if (list && list.focus) list.focus();
+      }, FAV_UNDO_MS);
+    }
+    favUndo.items.push({ item, groupId: groupId || FAV_GROUP_DEFAULT });
+    renderFavUndo();
+    const btn = $('favUndoBtn');
+    if (btn && btn.focus) btn.focus();
+  }
+
+  async function undoFavRemove() {
+    const u = favUndo;
+    if (!u) return;
+    if (u.timer) clearTimeout(u.timer);
+    favUndo = null;
+    renderFavUndo();
+    const store = favStore();
+    if (!store) return;
+    let failed = null;
+    for (let i = u.items.length - 1; i >= 0; i--) {
+      const rec = u.items[i];
+      const r = await store.add(rec.item, { keepSavedAt: true });
+      if (!r.ok) { failed = r; continue; }
+      if (rec.groupId && rec.groupId !== FAV_GROUP_DEFAULT) await store.move(rec.item.steleId, rec.groupId);
+    }
+    if (failed) showFavHint('warn', failed.reason, failed);
+    await renderFavorites();
+    const list = $('favList');
+    if (list && list.focus) list.focus();
+  }
+
+  async function removeFavorite(item) {
+    const store = favStore();
+    if (!store) return;
+    const r = await store.remove(item.steleId, item.groupId);
+    if (!r.ok) { showFavHint('warn', r.reason, r); return; }
+    if (!r.removed) { showFavHint('warn', 'not-found'); return; }
+    clearFavHint();
+    pushFavUndo(r.item || item, item.groupId);
+    await renderFavorites();
+  }
+
+  async function moveFavorite(item, groupId) {
+    const store = favStore();
+    if (!store) return;
+    const r = await store.move(item.steleId, groupId);
+    favMovingId = null;
+    if (!r.ok) { showFavHint('warn', r.reason, r); await renderFavorites(); return; }
+    clearFavHint();
+    await renderFavorites();
+  }
+
+  async function renderFavorites() {
+    const store = favStore();
+    if (!store) return;
+    const lib = await store.read();
+    const groups = (lib.groups && lib.groups.length) ? lib.groups : [{ id: FAV_GROUP_DEFAULT, name: '未分组', system: true }];
+    favGroupsCache = groups;
+    if (!groups.some(g => g.id === favActiveGroup)) favActiveGroup = FAV_GROUP_DEFAULT;
+    const all = lib.items || [];
+    const visible = filterFavorites(all, favQuery, favScope, favActiveGroup);
+
+    renderFavChips(groups, groupCounts(all));
+    renderFavScope();
+    renderFavHint();
+
+    const list = $('favList');
+    const isEmpty = renderFavEmpty(all, visible, groups);
+    if (list) {
+      list.innerHTML = '';
+      list.hidden = isEmpty;
+      if (!isEmpty) visible.forEach(item => list.appendChild(renderFavItem(item, groups)));
+    }
+
+    const found = $('favFound');
+    if (found) found.textContent = favQuery.trim() ? '找到 ' + visible.length + ' 条' : '';
+  }
+
+  function setFavScope(scope) {
+    favScope = scope === 'all' ? 'all' : 'group';
+    renderFavorites();
+  }
+
+  function setFavQuery(q) {
+    favQuery = String(q == null ? '' : q);
+    const input = $('favQuery');
+    if (input && input.value !== favQuery) input.value = favQuery;
+    renderFavorites();
+  }
+
+  function openFavGroupMenu(open) {
+    const menu = $('favMenu'), btn = $('favGroupMenuBtn');
+    const show = open == null ? !(menu && !menu.hidden) : !!open;
+    if (menu) menu.hidden = !show;
+    if (btn) btn.setAttribute('aria-expanded', String(show));
+  }
+
+  function showFavForm(which, show) {
+    const newForm = $('favNewForm'), renameForm = $('favRenameForm');
+    if (newForm) newForm.hidden = !(show && which === 'new');
+    if (renameForm) renameForm.hidden = !(show && which === 'rename');
+    if (show) {
+      const input = $(which === 'new' ? 'favNewName' : 'favRenameName');
+      if (input) {
+        input.value = which === 'rename' ? ((currentGroupObj() || {}).name || '') : '';
+        if (input.focus) input.focus();
+      }
+    }
+  }
+
+  function currentGroupObj() {
+    return favGroupsCache.find(g => g.id === favActiveGroup) || null;
+  }
+
+  async function submitFavGroup(which) {
+    const store = favStore();
+    if (!store) return;
+    const input = $(which === 'new' ? 'favNewName' : 'favRenameName');
+    const name = input ? String(input.value || '').trim() : '';
+    const r = which === 'new' ? await store.createGroup(name) : await store.renameGroup(favActiveGroup, name);
+    if (!r.ok) {
+      showFavHint('warn', r.reason, r);
+      return;
+    }
+    clearFavHint();
+    showFavForm(which, false);
+    if (which === 'new' && r.group) favActiveGroup = r.group.id;
+    await renderFavorites();
+  }
+
+  async function deleteCurrentGroup() {
+    const store = favStore();
+    if (!store) return;
+    if (typeof window.confirm === 'function' && !window.confirm('删除这个分组？组内条目会移到「未分组」，不会丢失。')) return;
+    const r = await store.deleteGroup(favActiveGroup);
+    if (!r.ok) { showFavHint('warn', r.reason, r); return; }
+    favActiveGroup = FAV_GROUP_DEFAULT;
+    clearFavHint();
+    await renderFavorites();
+  }
+
+  function exportFavorites() {
+    const store = favStore();
+    if (!store) return;
+    store.exportJSON().then(text => {
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const blob = new Blob([text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'hmp-favorites-' + stamp + '.json';
+        document.body.appendChild(a);
+        a.click();
+        if (a.remove) a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        favHint = { kind: 'info', text: '已导出收藏（不含任何 Key）' };
+        renderFavHint();
+      } catch (e) {
+        showFavHint('warn', 'storage');
+      }
+    });
+  }
+
+  // Tab：默认收藏（D-114）；设置页 DOM 不重建，dirty/表单值/折叠态原样（Q16）
+  function activateTab(name, focus) {
+    activeTab = name === 'set' ? 'set' : 'fav';
+    const fav = $('panel-fav'), set = $('panel-set');
+    const tbFav = $('tab-fav'), tbSet = $('tab-set');
+    if (fav) fav.hidden = activeTab !== 'fav';
+    if (set) set.hidden = activeTab !== 'set';
+    if (tbFav) { tbFav.setAttribute('aria-selected', String(activeTab === 'fav')); tbFav.tabIndex = activeTab === 'fav' ? 0 : -1; }
+    if (tbSet) { tbSet.setAttribute('aria-selected', String(activeTab === 'set')); tbSet.tabIndex = activeTab === 'set' ? 0 : -1; }
+    if (activeTab === 'fav') {
+      renderFavorites();
+    } else {
+      cancelFavUndo();
+      renderState(computeState());
+    }
+    if (focus) {
+      const t = activeTab === 'fav' ? tbFav : tbSet;
+      if (t && t.focus) t.focus();
+    }
+  }
+
+  function bindFavorites() {
+    const tbFav = $('tab-fav'), tbSet = $('tab-set');
+    if (tbFav) tbFav.addEventListener('click', () => activateTab('fav', true));
+    if (tbSet) tbSet.addEventListener('click', () => activateTab('set', true));
+    [tbFav, tbSet].forEach(t => {
+      if (!t) return;
+      t.addEventListener('keydown', ev => {
+        if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+        ev.preventDefault();
+        const next = activeTab === 'fav' ? 'set' : 'fav';
+        activateTab(next, true);
+      });
+    });
+
+    const q = $('favQuery');
+    if (q) {
+      q.addEventListener('input', () => {
+        if (favSearchTimer) clearTimeout(favSearchTimer);
+        favSearchTimer = setTimeout(() => setFavQuery(q.value), FAV_SEARCH_DEBOUNCE);
+      });
+      q.addEventListener('keydown', ev => {
+        if (ev.key === 'Escape') { q.value = ''; setFavQuery(''); }
+      });
+    }
+    const sg = $('scopeGroup'), sa = $('scopeAll');
+    if (sg) sg.addEventListener('click', () => setFavScope('group'));
+    if (sa) sa.addEventListener('click', () => setFavScope('all'));
+
+    const menuBtn = $('favGroupMenuBtn');
+    if (menuBtn) menuBtn.addEventListener('click', () => openFavGroupMenu());
+    document.addEventListener('click', ev => {
+      const menu = $('favMenu');
+      if (!menu || menu.hidden) return;
+      if (menu.contains(ev.target)) return;
+      if (menuBtn && menuBtn.contains && menuBtn.contains(ev.target)) return;
+      openFavGroupMenu(false);
+    });
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') openFavGroupMenu(false); });
+
+    if ($('favNewGroup')) $('favNewGroup').addEventListener('click', () => { openFavGroupMenu(false); showFavForm('new', true); });
+    if ($('favRenameGroup')) $('favRenameGroup').addEventListener('click', () => { openFavGroupMenu(false); showFavForm('rename', true); });
+    if ($('favDeleteGroup')) $('favDeleteGroup').addEventListener('click', () => { openFavGroupMenu(false); deleteCurrentGroup(); });
+    if ($('favNewOk')) $('favNewOk').addEventListener('click', () => submitFavGroup('new'));
+    if ($('favNewCancel')) $('favNewCancel').addEventListener('click', () => showFavForm('new', false));
+    if ($('favRenameOk')) $('favRenameOk').addEventListener('click', () => submitFavGroup('rename'));
+    if ($('favRenameCancel')) $('favRenameCancel').addEventListener('click', () => showFavForm('rename', false));
+    [['favNewName', 'new'], ['favRenameName', 'rename']].forEach(pair => {
+      const el = $(pair[0]);
+      if (!el) return;
+      el.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); submitFavGroup(pair[1]); }
+        if (ev.key === 'Escape') showFavForm(pair[1], false);
+      });
+    });
+
+    if ($('favUndoBtn')) $('favUndoBtn').addEventListener('click', undoFavRemove);
+    if ($('favExport')) $('favExport').addEventListener('click', exportFavorites);
+    if ($('favEmptyGo')) $('favEmptyGo').addEventListener('click', () => {
+      if (!favQuery.trim() && favScope === 'group' && $('favEmptyGo').textContent === '查看全部收藏') setFavScope('all');
+      else activateTab('set', true);
+    });
+    if ($('favEmptyClear')) $('favEmptyClear').addEventListener('click', () => setFavQuery(''));
+
+    activateTab('fav', false);
+  }
+
   // ---------------- 绑定 ----------------
   function bind() {
     // 主题
@@ -811,6 +1374,8 @@
       });
     });
 
+    bindFavorites();
+
     if (!savedSnapshot) resetRes();
   }
 
@@ -829,6 +1394,15 @@
       }
     },
     form: { read: readForm, isDirty, save },
+    favorites: {
+      activateTab, render: renderFavorites, setQuery: setFavQuery, setScope: setFavScope,
+      filter: filterFavorites, groupCounts, buildDeepLink, buildSearchLink,
+      setGroup: id => { favActiveGroup = id || FAV_GROUP_DEFAULT; return renderFavorites(); },
+      undoAlive, undoText, openMenu: openFavGroupMenu, showForm: showFavForm, showHint: showFavHint, clearHint: clearFavHint,
+      resetUi: () => { favMovingId = null; favHint = null; openFavGroupMenu(false); showFavForm('new', false); showFavForm('rename', false); },
+      state: () => ({ activeTab, group: favActiveGroup, scope: favScope, query: favQuery }),
+      __undo: () => favUndo
+    },
     refreshCacheInfo
   };
 

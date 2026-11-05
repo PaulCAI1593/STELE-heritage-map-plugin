@@ -165,7 +165,7 @@
     return lib || defaultLibrary();
   }
 
-  async function add(item) {
+  async function add(item, opts) {
     const cleaned = cleanItem(item);
     if (!cleaned) return { ok: false, reason: 'invalid' };
     const loaded = await loadForWrite();
@@ -177,7 +177,7 @@
     }
     if (lib.items.length >= LIMITS.items) return { ok: false, reason: 'limit' };
     if (!lib.groups.some(g => g.id === cleaned.groupId)) cleaned.groupId = DEFAULT_GROUP_ID;
-    cleaned.savedAt = Date.now();
+    if (!(opts && opts.keepSavedAt) || !Number.isFinite(cleaned.savedAt)) cleaned.savedAt = Date.now();
     lib.items.push(cleaned);
     lib.items.sort((a, b) => b.savedAt - a.savedAt);
     const w = await writeLibrary(lib);
