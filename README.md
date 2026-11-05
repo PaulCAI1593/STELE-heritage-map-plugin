@@ -121,7 +121,7 @@ git clone https://github.com/PaulCAI1593/STELE-heritage-map-plugin.git
 
 ## 🛠️ 开发
 
-无需安装任何依赖，纯 Node 即可跑全部测试（**761 项检查**）：
+无需安装任何依赖，纯 Node 即可跑全部测试（**923 项检查**：25 套 908 项 + 点位切换 15 项）：
 
 ```bash
 npm test                 # 全部
@@ -141,7 +141,7 @@ npm run build            # 重新生成图标 + 打包到 release/
 | `src/` | **扩展本体**，直接加载这个目录 |
 | `src/content/` | 内容脚本：解码、名称处理、坐标、缓存、匹配、卡片渲染 |
 | `src/popup/` | 工具栏弹窗（填 Key、测试连通性、清缓存） |
-| `tests/` | 761 项回归测试，`tests/fixtures/` 是 22 个真实文保的 feature 响应样本（含 16 个类型样本与 5 个改名案例） |
+| `tests/` | 923 项回归测试（25 套 908 项 + 点位切换 15 项），`tests/fixtures/` 是 22 个真实文保的 feature 响应样本（含 16 个类型样本与 5 个改名案例） |
 | `tools/` | 图标生成、打包脚本 |
 | `docs/` | 实机测试说明 |
 | `docs/screenshots/` | 功能截图（v0.3.x 三张 + 0.4.0 弹窗两套主题） |
