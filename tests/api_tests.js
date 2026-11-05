@@ -238,7 +238,10 @@ function lastParams() {
 
     check('http.js 提供统一入口', /window\.HMP\.http\s*=/.test(httpSrc));
     check('http.js 优先经 service worker 转发', /sendMessage/.test(httpSrc));
-    check('http.js 在 worker 不可用时退回直连', /await fetch\(url/.test(httpSrc));
+    // 条目 1 起直连被包进 withTimeout（超时判定），"await fetch(url" 的字面形态变了；
+    // 这里按语义断言：仍然直接 fetch 该 URL（带 credentials:'omit'），且被超时包装。
+    check('http.js 在 worker 不可用时退回直连',
+      /withTimeout\(fetch\(url, \{ credentials: 'omit' \}\)/.test(httpSrc), httpSrc.slice(0, 60));
     check('service worker 注册了转发监听', /onMessage\.addListener/.test(swSrc));
     check('service worker 异步响应（返回 true 保持通道）', /return true;\s*\/\/ 异步响应/.test(swSrc));
 
