@@ -173,8 +173,8 @@ function card() { return global.document.getElementById(C.CARD_ID); }
     /table-layout:auto/.test(jsTxt) && /\.hmp-fields \{[^}]*table-layout: auto;/.test(cssTxt));
   check('值列可折行（.hmp-f-val overflow-wrap:anywhere）',
     /\.hmp-f-val \{[^}]*overflow-wrap: anywhere;/.test(cssTxt));
-  check('窄屏只调字号，不再覆盖列宽（:244 无 width）',
-    /td\.hmp-f-label \{ font-size: 11\.5px; \}/.test(cssTxt));
+  check('窄屏标签字号与宽屏一致为 12px，不覆盖列宽（无 width）',
+    /td\.hmp-f-label \{ font-size: 12px; \}/.test(cssTxt));
 
   finish();
 })().catch(e => { console.error('测试异常:', e); process.exit(1); });
