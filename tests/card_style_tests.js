@@ -114,6 +114,53 @@ function card() { return global.document.getElementById(C.CARD_ID); }
       vals.map(v => (v.textContent || '').slice(0, 12)).join('|'));
   }
 
+  // ── #16：匹配行名称 + 距离独占第二行（前缀单独一行）──
+  const MATCH_CASES = [
+    { type: 'name', siteName: '南阳武侯祠', name: '南阳武侯祠', want: '地图上同名点位：' },
+    { type: 'name', siteName: '南阳武侯祠', name: '卧龙岗武侯祠景区（南阳市博物馆）', want: '匹配到地图上的：' },
+    { type: 'location', siteName: '南阳武侯祠', name: '南阳武侯祠博物馆', want: '该点位现用名与文保名称不同，已按位置匹配到：' },
+  ];
+  for (const c of MATCH_CASES) {
+    C.renderState({ card: 'single', kind: 'found', provider: 'amap', providerLabel: '高德地图',
+      info: { name: c.name, opentimeWeek: '08:00-18:00', address: '某路 1 号' },
+      siteName: c.siteName, matchType: c.type, matchDist: 1234,
+      evidenceText: '三路证据：名称 1 候选（最高 1.00）', amapSearchUrl: '#', baiduSearchUrl: '#' });
+    await sleep(10);
+    const el = card();
+    const line = el.querySelector('.hmp-match-line');
+    const nameSpan = el.querySelector('.hmp-match-name');
+    const lineText = line ? env.textOf(line) : '';
+    const nameText = nameSpan ? env.textOf(nameSpan) : '';
+    check('匹配行有 .hmp-match-name 且含名称 + 距离',
+      !!nameSpan && nameText.indexOf(c.name) >= 0 && nameText.indexOf('（直线约 1234 米）') >= 0,
+      nameText);
+    // 结构：前缀是 <p> 的直接文本，名称+距离是它下面唯一的 <span>（block 换行），前缀与名称不拼在同一节点
+    const kids = (line && line.children) || [];
+    const prefixNode = kids[0];
+    const bNode = nameSpan && (nameSpan.querySelector('b') ||
+      (nameSpan.children || []).filter(k => k.tagName === 'B')[0]);
+    check('前缀独占第一行（前缀是匹配行首个文本节点，名称+距离在独立的 .hmp-match-name 里）',
+      !!line && !!prefixNode && prefixNode.nodeType === 3 && (prefixNode.textContent === c.want || prefixNode.text === c.want) &&
+      kids.length === 2 && /hmp-match-name/.test(kids[1].className || ''),
+      JSON.stringify({ kids: kids.map(k => [k.nodeType, k.text || k.className]) }));
+    check('名称在 <b> 里（前缀与名称不拼同一节点）',
+      !!bNode && env.textOf(bNode) === c.name, bNode ? env.textOf(bNode) : 'no-b');
+  }
+  // 静态不变量：#16 的样式只在卡片作用域、字号/颜色不回退
+  {
+    const fsx = require('fs'); const pathx = require('path');
+    const cssTxt = fsx.readFileSync(pathx.join(__dirname, '../src/content/content.css'), 'utf8');
+    check('CSS：#hmp-opening-card .hmp-match-name display:block + margin-top:2px',
+      /#hmp-opening-card \.hmp-match-name \{[^}]*display: block;[^}]*margin-top: 2px;/.test(cssTxt));
+    check('CSS：无未作用域的 .hmp-match-name 规则',
+      !/(^|\n)[^#\n]*\.hmp-match-name\s*\{/.test(cssTxt.replace(/#hmp-opening-card \.hmp-match-name \{[^}]*\}/g, '')));
+    check('匹配行字号/颜色未回退（14px、#333333；窄屏 13px）',
+      /#hmp-opening-card \.hmp-match-line \{[^}]*font-size: 14px;[^}]*color: #333333;/.test(cssTxt) &&
+      /#hmp-opening-card \.hmp-match-line,\n[^}]*font-size: 13px;/.test(cssTxt));
+    check('名称加粗色 #212529 未变',
+      /#hmp-opening-card \.hmp-match-line b \{[^}]*font-weight: 600;[^}]*color: #212529;/.test(cssTxt));
+  }
+
   // ── #15 静态不变量（防回退，不依赖布局）──
   const fsx = require('fs'); const pathx = require('path');
   const cssTxt = fsx.readFileSync(pathx.join(__dirname, '../src/content/content.css'), 'utf8');

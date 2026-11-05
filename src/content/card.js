@@ -375,8 +375,11 @@
     if (matchPrefix) {
       const line = el('p', { className: 'hmp-match-line' });
       line.appendChild(document.createTextNode(matchPrefix));
-      line.appendChild(el('b', {}, matchedName));
-      line.appendChild(document.createTextNode(distTxt));
+      // 名称 + 距离独占第二行：长 POI 名若与前缀同排，会折成「匹配到地图上的：南 / 阳…」两行
+      const nameLine = el('span', { className: 'hmp-match-name' });
+      nameLine.appendChild(el('b', {}, matchedName));
+      if (distTxt) nameLine.appendChild(document.createTextNode(distTxt));
+      line.appendChild(nameLine);
       children.push(line);
     }
 

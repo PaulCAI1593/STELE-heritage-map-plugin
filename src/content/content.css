@@ -81,6 +81,12 @@
   color: #333333;
 }
 
+/* #16：名称 + 距离独占一行，前缀（匹配方式）单独占第一行 */
+#hmp-opening-card .hmp-match-name {
+  display: block;
+  margin-top: 2px;
+}
+
 #hmp-opening-card .hmp-match-line b {
   font-weight: 600;
   color: #212529;
