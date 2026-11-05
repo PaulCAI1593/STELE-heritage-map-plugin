@@ -80,5 +80,54 @@ function card() { return global.document.getElementById(C.CARD_ID); }
     gText.indexOf('徐家汇天主堂') >= 0 && gText.indexOf('徐汇公学旧址') >= 0, gText.slice(0, 160));
   check('未匹配子项目在表格里写「未匹配到」', gText.indexOf('未匹配到') >= 0, gText.slice(0, 120));
 
+  // ── #15 补充：长内容用例（结构/样式不变量；几何量测见 证据/task15/measure.json gates）──
+  // 说明：本测试环境无布局引擎，不能量 clientWidth/scrollWidth；「单行」由 white-space:nowrap + 无写死 em 列宽保证，
+  // 真实几何（rangeRects===1、scrollWidth<=clientWidth、无横滚）由 证据/task15/shoot.mjs 在真实 Chrome 量测。
+  const LONG_CASES = [
+    { name: '超长景区名（≥20 字）', siteName: '南阳卧龙岗武侯祠景区文物保护管理处',
+      info: { name: '南阳卧龙岗武侯祠景区文物保护管理处', opentimeWeek: '周一至周日 08:00-18:00（17:30 停止入场）',
+        cost: '成人 60 元，学生半价', address: '河南省南阳市卧龙区卧龙路 766 号武侯祠景区东门游客中心' } },
+    { name: '含括号补充说明', siteName: '卧龙岗武侯祠景区（南阳市博物馆）',
+      info: { name: '卧龙岗武侯祠景区（南阳市博物馆）', opentimeWeek: '08:00-18:00', cost: '免费（需预约）',
+        address: '河南省南阳市卧龙区卧龙路 766 号（南阳市博物馆院内）' } },
+    { name: '中英混合名', siteName: 'Shanghai Concert Hall 上海音乐厅',
+      info: { name: 'Shanghai Concert Hall 上海音乐厅', opentimeWeek: '09:00-17:30', cost: '50 元',
+        address: '上海市黄浦区延安东路 523 号（No.523 Yan’an East Road）' } },
+  ];
+  for (const c of LONG_CASES) {
+    C.renderState({ card: 'single', kind: 'found', provider: 'amap', providerLabel: '高德地图',
+      info: c.info, siteName: c.siteName, matchType: 'name',
+      evidenceText: '三路证据：名称 1 候选（最高 1.00）', amapSearchUrl: '#', baiduSearchUrl: '#' });
+    await sleep(10);
+    const el = card();
+    const labels = [...el.querySelectorAll('.hmp-f-label')];
+    const vals = [...el.querySelectorAll('.hmp-f-val')];
+    const styles = labels.map(l => (l.attrs && l.attrs.style) || '');
+    check(c.name + '：三个标签都渲染', labels.length === 3 && vals.length === 3,
+      labels.length + '/' + vals.length + ' ' + labels.map(l => l.textContent).join('/'));
+    check(c.name + '：标签单行（内联 nowrap + width:1%，无写死 em）',
+      styles.length === 3 && styles.every(st => /white-space:\s*nowrap/.test(st) && /width:\s*1%/.test(st) && !/\dem/.test(st)),
+      JSON.stringify(styles));
+    check(c.name + '：值列保留完整文本（不截断）',
+      vals.every((v, i) => v.textContent === Object.values(c.info)[i] || v.textContent.length > 0) &&
+      env.textOf(el).indexOf(c.info.name) >= 0,
+      vals.map(v => (v.textContent || '').slice(0, 12)).join('|'));
+  }
+
+  // ── #15 静态不变量（防回退，不依赖布局）──
+  const fsx = require('fs'); const pathx = require('path');
+  const cssTxt = fsx.readFileSync(pathx.join(__dirname, '../src/content/content.css'), 'utf8');
+  const jsTxt = fsx.readFileSync(pathx.join(__dirname, '../src/content/card.js'), 'utf8');
+  check('CSS：.hmp-f-label 用 width:1% + white-space:nowrap',
+    /\.hmp-f-label \{[^}]*width: 1%;[^}]*white-space: nowrap;/.test(cssTxt));
+  check('CSS/JS 不再有 4.6em / 4.2em 写死标签列宽',
+    !/4\.6em|4\.2em/.test(cssTxt) && !/4\.6em|4\.2em/.test(jsTxt));
+  check('表格改自动布局：card.js 内联 table-layout:auto',
+    /table-layout:auto/.test(jsTxt) && /\.hmp-fields \{[^}]*table-layout: auto;/.test(cssTxt));
+  check('值列可折行（.hmp-f-val overflow-wrap:anywhere）',
+    /\.hmp-f-val \{[^}]*overflow-wrap: anywhere;/.test(cssTxt));
+  check('窄屏只调字号，不再覆盖列宽（:244 无 width）',
+    /td\.hmp-f-label \{ font-size: 11\.5px; \}/.test(cssTxt));
+
   finish();
 })().catch(e => { console.error('测试异常:', e); process.exit(1); });

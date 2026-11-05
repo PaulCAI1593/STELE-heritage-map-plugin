@@ -94,7 +94,7 @@
   border: 0;
   border-collapse: collapse;
   border-spacing: 0;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 #hmp-opening-card table.hmp-fields td {
@@ -105,7 +105,8 @@
 }
 
 #hmp-opening-card table.hmp-fields td.hmp-f-label {
-  width: 4.6em;
+  width: 1%;
+  white-space: nowrap;
   padding-right: 10px;
   font-size: 12px;
   line-height: 1.7;
@@ -240,7 +241,7 @@
   #hmp-opening-card .hmp-group-title { font-size: 13px; }
   #hmp-opening-card table.hmp-fields td.hmp-f-val { font-size: 13px; }
   #hmp-opening-card table.hmp-fields td { padding: 2px 0; }
-  #hmp-opening-card table.hmp-fields td.hmp-f-label { width: 4.2em; font-size: 11.5px; }
+  #hmp-opening-card table.hmp-fields td.hmp-f-label { font-size: 11.5px; }
   #hmp-opening-card .hmp-links { font-size: 12.5px; margin-top: 5px; }
   #hmp-opening-card .hmp-foot { font-size: 11px; margin-top: 5px; }
   #hmp-opening-card table.hmp-grp { font-size: 11.5px; }

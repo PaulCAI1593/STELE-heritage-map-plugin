@@ -71,8 +71,8 @@
   // 这些类与内联样式都取自 /main.css 与站点渲染代码（app.js）。
 
   const EL_TABLE_STYLE =
-    'margin:0 0 8px;padding:0;border:0;border-collapse:collapse;border-spacing:0;table-layout:fixed';
-  const EL_TD_KEY_STYLE = 'width:4.6em;padding-right:10px;font-size:12px;line-height:1.7';
+    'margin:0 0 8px;padding:0;border:0;border-collapse:collapse;border-spacing:0;table-layout:auto';
+  const EL_TD_KEY_STYLE = 'width:1%;white-space:nowrap;padding-right:10px';
   const EL_TD_VAL_STYLE = 'white-space:pre-wrap';
 
   /**
