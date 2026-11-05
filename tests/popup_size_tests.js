@@ -105,8 +105,8 @@ check('未引入 scrollbar-gutter（sticky 单方案，避免预留槽压缩档�
   check('popup-size.js 在 popup.css 之后', iSize > iCss);
   check('popup-size.js 在 popup.js 之前', iSize < iPopup);
 }
-check('版本 0.4.5：manifest', manifest.version === '0.4.5');
-check('版本 0.4.5：package.json', pkg.version === '0.4.5');
+check('版本 0.5.0：manifest', manifest.version === '0.5.0');
+check('版本 0.5.0：package.json', pkg.version === '0.5.0');
 check('package.json 把本套接进 npm test', /popup_size_tests\.js/.test(pkg.scripts.test));
 check('DATA_VERSION 未动（仍 46）', /DATA_VERSION\s*=\s*46/.test(fs.readFileSync(path.join(SRC, 'content', 'cache.js'), 'utf8')));
 

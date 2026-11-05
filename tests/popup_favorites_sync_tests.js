@@ -110,7 +110,7 @@ function build(opts) {
         },
       },
     },
-    runtime: { getManifest: () => ({ version: '0.4.5' }) },
+    runtime: { getManifest: () => ({ version: '0.5.0' }) },
     tabs: { create() {} },
   };
 

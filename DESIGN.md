@@ -521,11 +521,13 @@ heritage-map-plugin/
 │   │   └── apis/
 │   │       ├── amap.js      高德 v5 place/text + place/around
 │   │       └── baidu.js     百度 place/v2/search（行政区 + 圆形区域）
-│   ├── popup/               Key 配置面板（测试前自动保存）
+│   ├── shared/
+│   │   └── favorites-store.js 收藏夹本地存储（单键 hmp:favorites:v1，schema 1，读写串行）
+│   ├── popup/               弹窗：Key 配置 + 收藏页（搜索/分组/撤销/导出）
 │   ├── background/          MV3 service worker（缓存清理 + 跨域请求代理）
 │   ├── icons/               PNG 图标（16/32/48/128，由 tools/make-icons.js 生成）
 │   └── LICENSE
-├── tests/                   回归测试（npm test，共 1114 项检查 = 30 套 1099 项 + 点位切换 15 项）
+├── tests/                   回归测试（npm test，共 1214 项检查 = 34 套 1199 项 + 点位切换 15 项）
 │   ├── fixtures/            22 个真实点位的 feature 响应 + picks.json
 │   ├── run_tests.js         16 个文保单位匹配测试
 │   ├── baidu_parity_tests.js 百度侧全链路 + 跨数据源决策一致性矩阵
