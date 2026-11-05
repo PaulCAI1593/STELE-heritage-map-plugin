@@ -74,7 +74,7 @@ function build(opts) {
         remove(keys, cb) { [].concat(keys).forEach(k => { delete store[k]; }); if (cb) cb(); }
       }
     },
-    runtime: { getManifest: () => ({ version: '0.4.4' }) },
+    runtime: { getManifest: () => ({ version: '0.4.5' }) },
     tabs: { create() {} }
   };
 
