@@ -16,7 +16,8 @@
 //   "meta": {"synthetic": true, "note": "..."},
 //   "A": [{id, steleName, expected: "correct"|"wrong"|"unmatched", route, candidates:[{name,lon,lat,rank}]}],
 //   "B": [{id, steleName, expected: "institution"|"homonymFalsePick"|"homonymReject", route, candidates:[...]}],
-//   "C": [{id, steleName, route, candidates:[...], before: {...}|null, after: {...}|null}]
+//   "C": [{id, steleName, route, candidates:[...], before: {...}|null, after: {...}|null,
+//          expected?, forbiddenPicks?, expectedDriftKm?, driftToleranceKm?}]
 // }
 //
 // ⚠️ 阶段 L 只验证「日志/可解释性改动不影响 top1」；KP/KS 惩罚属阶段 S，本阶段不参与打分，
@@ -233,6 +234,10 @@ function runOnce(opts, matcher) {
     const r = pickTop1(matcher, c, opts.kp, opts.ks);
     cases.C.push({
       id: c.id, steleName: c.steleName, expected: c.expected == null ? null : c.expected,
+      // #22b：真机案例可带期望坐标偏差（km）与容差；容差缺省 0.05 km。
+      expectedDriftKm: Number.isFinite(c.expectedDriftKm) ? c.expectedDriftKm : null,
+      driftToleranceKm: Number.isFinite(c.driftToleranceKm) ? c.driftToleranceKm : null,
+      forbiddenPicks: Array.isArray(c.forbiddenPicks) ? c.forbiddenPicks.slice() : null,
       candidates: (c.candidates || []).map(x => x && x.name).filter(Boolean),
       before: c.before && Object.keys(c.before).length ? c.before : null,
       after: r.pick,
@@ -256,12 +261,16 @@ function diffTop1(before, after) {
 }
 
 // #22：单条 C 案例判定（期望字段优先）。
+//   - forbiddenPicks 命中：直接判失败（防商户/机关/行政点硬压漏回来）；
 //   - expected='unmatched'：必须未匹配；
 //   - 候选里有本体：必须选本体（验「本体优先」不被误压）；
 //   - expected 含「不得选」：未匹配或非排除点即通过；
 //   - 其它：有 pick 且不是排除点即通过。
-function verdictOf(matcher, c) {
+function baseVerdictOf(matcher, c) {
   const pick = c.after && c.after.actualPick != null ? c.after.actualPick : null;
+  if (pick && Array.isArray(c.forbiddenPicks) && c.forbiddenPicks.indexOf(pick) >= 0) {
+    return { ok: false, why: '选中禁止点：' + pick };
+  }
   const expect = c.expected;
   if (expect === 'unmatched') return { ok: pick === null, why: pick === null ? '未匹配（符合期望）' : '期望未匹配，实际选到 ' + pick };
   const excluded = pick && matcher && typeof matcher.exclusionKindOf === 'function'
@@ -271,6 +280,37 @@ function verdictOf(matcher, c) {
   if (hasSelf) return { ok: pick === c.steleName, why: pick === c.steleName ? '选本体' : (pick ? '本体在候选内但选了 ' + pick : '本体在候选内却未匹配') };
   if (typeof expect === 'string' && expect.indexOf('不得选') >= 0) return { ok: pick === null, why: pick === null ? '未匹配（符合期望）' : '期望不选排除点，实际选到 ' + pick };
   return { ok: pick !== null, why: pick === null ? '未匹配' : 'pick 非排除点' };
+}
+
+// #22b：C 段坐标偏差校验（真机日志定标）。
+//   口径与业务侧 final.coordinateDriftKm 一致：仅「完全同名（isExactName）」且距离
+//   > 3 km 时存在，取 1 位小数公里（round(dist/100)/10）。
+//   case 带 expectedDriftKm 时，实际 drift 必须落在 driftToleranceKm（默认 0.05 km）内，
+//   否则该条失败、整体 exit 1。这里不放宽容差：dist 与 expectedDriftKm 对不上应当
+//   改数据（对齐坐标/重摆），不能在工具里用「差不多的容差」掩盖。
+const DRIFT_TOLERANCE_DEFAULT_KM = 0.05;
+function driftKmOf(matcher, c) {
+  const a = c && c.after;
+  if (!a || a.actualPick == null || !Number.isFinite(a.dist)) return null;
+  if (a.dist <= NAME_MAX_DIST) return null;
+  if (!matcher || typeof matcher.isExactName !== 'function') return null;
+  if (matcher.isExactName(c.steleName, a.actualPick) !== true) return null;
+  return Math.round(a.dist / 100) / 10;
+}
+
+function verdictOf(matcher, c) {
+  const base = baseVerdictOf(matcher, c);
+  if (!Number.isFinite(c.expectedDriftKm)) return base;
+  const actual = driftKmOf(matcher, c);
+  const tol = Number.isFinite(c.driftToleranceKm) ? c.driftToleranceKm : DRIFT_TOLERANCE_DEFAULT_KM;
+  if (actual == null) {
+    return { ok: false, why: base.why + '；期望同名坐标偏差 ' + c.expectedDriftKm + ' km，但未命中同名点或无距离' };
+  }
+  const delta = Math.abs(actual - c.expectedDriftKm);
+  if (delta > tol + 1e-9) {
+    return { ok: false, why: base.why + '；坐标偏差 ' + actual.toFixed(1) + ' km 超出期望 ' + c.expectedDriftKm + ' ± ' + tol + ' km（差 ' + delta.toFixed(3) + '）' };
+  }
+  return { ok: base.ok, why: base.why + '；坐标偏差 ' + actual.toFixed(1) + ' km（期望 ' + c.expectedDriftKm + ' ± ' + tol + '）' };
 }
 
 function isFacilityPick(matcher, steleName, pickName) {
@@ -375,7 +415,11 @@ function main() {
   };
   // #22：C 集逐条判定（verdict 用 expected 字段 + 候选里是否有本体），任一条不符即硬约束失败。
   //   L/S 两个阶段都判：C 是用户真机案例，不允许静默只报第一条。
-  result.C = (result.C || []).map(cc => Object.assign({}, cc, { verdict: verdictOf(afterMatcher, cc) }));
+  // #22b：同时算 drift（业务侧 final.coordinateDriftKm 同口径），report 里列出并校验期望值。
+  result.C = (result.C || []).map(cc => {
+    const drift = driftKmOf(afterMatcher, cc);
+    return Object.assign({}, cc, { drift, verdict: verdictOf(afterMatcher, cc) });
+  });
   for (const cc of result.C) {
     if (!cc.verdict.ok) hard.push(cc.id + ' 不符：' + cc.verdict.why);
   }
@@ -475,11 +519,12 @@ function main() {
     '## C 集（用户真机案例）',
     '',
     ...(result.C && result.C.length
-      ? ['| id | stele | expected | pick | sim | dist | source | verdict |', '|---|---|---|---|---|---|---|---|',
+      ? ['| id | stele | expected | pick | sim | dist | drift | source | verdict |', '|---|---|---|---|---|---|---|---|---|',
          ...result.C.map(c => '| ' + c.id + ' | ' + c.steleName + ' | ' + (c.expected == null ? '—' : c.expected) + ' | '
            + (c.after && c.after.actualPick ? c.after.actualPick : '（未匹配）') + ' | '
            + (c.after && c.after.sim != null ? c.after.sim : '—') + ' | '
            + (c.after && c.after.dist != null ? c.after.dist + ' m' : '—') + ' | '
+           + (c.drift != null ? c.drift.toFixed(1) + ' km' : '—') + ' | '
            + (c.after && c.after.source ? c.after.source : '—') + ' | '
            + (c.verdict.ok ? '✅ ' : '❌ ') + c.verdict.why + ' |')]
       : ['_无案例_']),

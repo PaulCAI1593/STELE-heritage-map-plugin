@@ -111,5 +111,53 @@ check('#22 C 集遍历全部案例并逐条 verdict（不只 C[0]）',
   cRun.code === 0 && cRes.C.length === 2 && cRes.C.every(c => c.verdict && c.verdict.ok) && /CX1/.test(cMd) && /CX2/.test(cMd),
   'exit=' + cRun.code + ' C=' + JSON.stringify(cRes.C.map(c => ({ id: c.id, ok: c.verdict && c.verdict.ok }))));
 
+// #22b：C 段 drift 校验（expectedDriftKm ± driftToleranceKm，容差缺省 0.05 km）。
+// drift 口径与业务侧 final.coordinateDriftKm 一致：仅完全同名且距离 > 3 km 时存在，1 位小数公里。
+// target(112.529, 33.004) → 玄妙观(112.529, 33.064003) ≈ 6672 m ⇒ drift 6.7 km。
+const driftCases = JSON.parse(fs.readFileSync(CASES, 'utf8'));
+const driftC = (id, expectedDriftKm) => ({
+  id, steleName: '玄妙观', expected: '玄妙观', route: 'name', targetLon: 112.529, targetLat: 33.004,
+  expectedDriftKm, driftToleranceKm: 0.05,
+  candidates: [{ name: '玄妙观', lon: 112.529, lat: 33.064003, rank: 2, type: '风景名胜' }],
+});
+driftCases.C = [driftC('CD1', 6.7)];
+const dFile = path.join(tmp, 'cases-drift-ok.json');
+fs.writeFileSync(dFile, JSON.stringify(driftCases));
+const outD = path.join(tmp, 'd');
+const dRun = run(base.concat(['--out', outD, '--cases', dFile, '--before-src', beforeDir]));
+const dRes = JSON.parse(fs.readFileSync(path.join(outD, 'result.json'), 'utf8'));
+const dMd = fs.readFileSync(path.join(outD, 'report.md'), 'utf8');
+check('#22b C 段 drift 在期望容差内 → exit 0，result/report 列出 drift',
+  dRun.code === 0 && dRes.C[0].drift === 6.7 && dRes.C[0].verdict.ok && /6\.7 km/.test(dMd),
+  'exit=' + dRun.code + ' drift=' + (dRes.C[0] && dRes.C[0].drift) + ' verdict=' + JSON.stringify(dRes.C[0] && dRes.C[0].verdict));
+
+// 负例：期望 5.0 km 而实际 6.7 km（差 1.7 ≫ 0.05）⇒ 该条失败、整体 exit 1。
+driftCases.C = [driftC('CD1', 6.7), driftC('CD2', 5.0)];
+const dBadFile = path.join(tmp, 'cases-drift-bad.json');
+fs.writeFileSync(dBadFile, JSON.stringify(driftCases));
+const outDBad = path.join(tmp, 'd-bad');
+const dBadRun = run(base.concat(['--out', outDBad, '--cases', dBadFile, '--before-src', beforeDir]));
+const dBadRes = JSON.parse(fs.readFileSync(path.join(outDBad, 'result.json'), 'utf8'));
+const dOk = dBadRes.C.find(c => c.id === 'CD1');
+const dBad = dBadRes.C.find(c => c.id === 'CD2');
+check('#22b C 段 drift 超出容差 → 该条失败且整体 exit 1（不靠放宽容差掩盖）',
+  dBadRun.code === 1 && dOk && dOk.verdict.ok && dBad && !dBad.verdict.ok && /超出期望/.test(dBad.verdict.why),
+  'exit=' + dBadRun.code + ' CD1=' + JSON.stringify(dOk && dOk.verdict) + ' CD2=' + JSON.stringify(dBad && dBad.verdict));
+
+// #22b 附：forbiddenPicks 命中直接判失败（C02c 用；即使 expected 本身允许该点也不放过）。
+const forbCases = JSON.parse(fs.readFileSync(CASES, 'utf8'));
+forbCases.C = [{
+  id: 'CF1', steleName: '玄妙观', expected: '玄妙观', route: 'name', targetLon: 112.529, targetLat: 33.004,
+  forbiddenPicks: ['玄妙观'], candidates: [{ name: '玄妙观', lon: 112.529, lat: 33.004, rank: 2 }],
+}];
+const fFile = path.join(tmp, 'cases-forbidden.json');
+fs.writeFileSync(fFile, JSON.stringify(forbCases));
+const outF = path.join(tmp, 'f');
+const fRun = run(base.concat(['--out', outF, '--cases', fFile, '--before-src', beforeDir]));
+const fRes = JSON.parse(fs.readFileSync(path.join(outF, 'result.json'), 'utf8'));
+check('#22b C 段 forbiddenPicks 命中 → 失败（防商户/机关/行政点漏回）',
+  fRun.code === 1 && fRes.C[0] && !fRes.C[0].verdict.ok && /选中禁止点/.test(fRes.C[0].verdict.why),
+  'exit=' + fRun.code + ' verdict=' + JSON.stringify(fRes.C[0] && fRes.C[0].verdict));
+
 fs.rmSync(tmp, { recursive: true, force: true });
 finish();
