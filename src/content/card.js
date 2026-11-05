@@ -1705,7 +1705,8 @@
       // 失败也分三种：超时 / 有候选但未通过校验 / 三路都没候选（见 missingNote）
       const failureKind = classifyFailure(diag, diag.usedProvider);
       const missPayload = { matched: null, provider: missProvider, fallbackNote, failureKind };
-      await window.HMP.cache.set(
+      // 负结果只缓存 1 小时（见 cache.setNegative）
+      await window.HMP.cache.setNegative(
         missProvider, poi.name, poi.adminLast || '', missPayload
       );
       renderResult(poi, missPayload);

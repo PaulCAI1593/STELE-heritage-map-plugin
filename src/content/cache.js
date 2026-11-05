@@ -39,11 +39,16 @@
   //       samePlace 判定为否时不再照补不误
   //  36 → 「本体-子单元」不再能当"名称强命中"（商船会馆 → 商船会馆-音乐剧《耋戏生》）；
   //       印证成立时改用非子单元那一路的名义；两家取舍规则彻底同源
-  const DATA_VERSION = 45;
+  //  46 → 负结果（未匹配 / 请求失败）TTL 改为 1 小时（正结果仍 7 天）；
+  //       不升版的话，老用户缓存里 7 天的负结果会继续命中，看不到新行为
+  const DATA_VERSION = 46;
 
   const BASE_PREFIX = 'hmp:cache:';                       // 用于清空/统计（跨版本）
   const PREFIX = BASE_PREFIX + 'v' + DATA_VERSION + ':';  // 用于读写（带版本）
-  const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
+  const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天（正结果）
+  // 负结果（未匹配 / 请求失败）只保留 1 小时：网络抖一下不该让点位 7 天不显示；
+  // 反过来，把"确实没收录"缓存太久也会让用户误以为插件坏了。
+  const NEG_TTL_MS = 60 * 60 * 1000;       // 1 小时
   const MAX_ENTRIES = 2000; // 防止 storage 膨胀
 
   // 简易字符串哈希（djb2）
@@ -78,6 +83,7 @@
     BASE_PREFIX,
     DATA_VERSION,
     TTL_MS,
+    NEG_TTL_MS,
     MAX_ENTRIES,
 
     keyOf(provider, name, admin) {
@@ -102,15 +108,17 @@
      * @param {string} name
      * @param {string} admin
      * @param {object} data 任意可 JSON 序列化的对象
+     * @param {object} [opts] { ttlMs } —— 按条目指定 TTL，缺省 7 天
      */
-    async set(provider, name, admin, data) {
+    async set(provider, name, admin, data, opts) {
       const k = this.keyOf(provider, name, admin);
+      const ttl = (opts && Number.isFinite(opts.ttlMs) && opts.ttlMs > 0) ? opts.ttlMs : TTL_MS;
       const entry = {
         provider,
         name,
         admin: admin || '',
         data,
-        expireAt: Date.now() + TTL_MS,
+        expireAt: Date.now() + ttl,
         savedAt: Date.now()
       };
       const all = await getAll();
@@ -122,6 +130,15 @@
         await removeMany(toRemove);
       }
       await setMany({ [k]: entry });
+    },
+
+    /**
+     * 写入负结果（未匹配 / 请求失败）：TTL 1 小时
+     * 网络的瞬时错误不该让这个点位 7 天不显示；
+     * 但"确实没收录"缓存太久也会让用户以为插件坏了。
+     */
+    async setNegative(provider, name, admin, data) {
+      return this.set(provider, name, admin, data, { ttlMs: NEG_TTL_MS });
     },
 
     /** 调试用：清空所有缓存 */
