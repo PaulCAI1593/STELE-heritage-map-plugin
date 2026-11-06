@@ -99,41 +99,43 @@
     </div>
 
     <div class="fav-tools">
-      <button class="btn sec" type="button" id="favSync">WebDAV 同步</button>
+      <button class="btn sec" type="button" id="favSyncCfg" aria-expanded="false" aria-controls="advSync">WebDAV 同步设置</button>
       <button class="btn sec" type="button" id="favExport">导出收藏</button>
     </div>
 
-    <!-- #58：WebDAV 配置搬到收藏页（收藏内容下方），点「WebDAV 同步设置」就地展开，不再跳「开放时间」页 -->
-    <details class="adv sync-cfg" id="advSync">
-      <summary>WebDAV 同步设置</summary>
-      <div class="body">
-        <div class="fld">
-          <div class="lbl"><label for="syncUrl">服务器地址</label></div>
-          <div class="inp-row"><input type="url" id="syncUrl" placeholder="例：https://dav.example.com/dav" autocomplete="off" spellcheck="false"></div>
-          <!-- #56：状态/引导独立一行（原先塞在 label 行，400 宽会把「服务器地址」挤成竖排） -->
+    <!-- #59：配置区由「WebDAV 同步设置」按钮就地展开（div + hidden），不再用 details，也不再有独立「WebDAV 同步」按钮 -->
+    <div class="sync-cfg" id="advSync" hidden>
+      <div class="fld">
+        <div class="lbl"><label for="syncUrl">服务器地址</label></div>
+        <div class="inp-row"><input type="url" id="syncUrl" placeholder="例：https://dav.example.com/dav" autocomplete="off" spellcheck="false"></div>
+        <!-- #56：状态/引导独立一行（原先塞在 label 行，400 宽会把「服务器地址」挤成竖排） -->
+        <div class="sync-state" id="syncState" data-kind="">
+          <svg class="ic sync-ic-ok" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 8.4 6.2 12 13.4 4.4"></path></svg>
+          <svg class="ic sync-ic-err" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8 14.6 13.6H1.4Z"></path><path d="M8 6.2v3.2M8 11.4h.01"></path></svg>
           <p class="hint sync-status" id="syncStatus" role="status" aria-live="polite"></p>
-          <p class="hint warn" id="syncHttpWarn" hidden>当前是 http 地址，账号与收藏会明文传输，建议改用 https。</p>
         </div>
-        <div class="fld">
-          <div class="lbl"><label for="syncUser">用户名</label></div>
-          <div class="inp-row"><input type="text" id="syncUser" autocomplete="off" spellcheck="false"></div>
-        </div>
-        <div class="fld">
-          <div class="lbl"><label for="syncPass">密码</label></div>
-          <div class="inp-row"><input type="password" id="syncPass" autocomplete="off" spellcheck="false"></div>
-          <p class="hint">凭据只存本机（chrome.storage.local），不进导出文件、不写日志。</p>
-        </div>
-        <div class="fld">
-          <div class="lbl"><label for="syncPath">远端路径</label></div>
-          <div class="inp-row"><input type="text" id="syncPath" placeholder="heritage-map/favorites.json" autocomplete="off" spellcheck="false"></div>
-          <p class="hint">相对服务器地址；默认 heritage-map/favorites.json。</p>
-        </div>
-        <div class="hrow">
-          <button class="btn primary" type="button" id="syncSave">保存配置</button>
-          <button class="btn sec" type="button" id="syncTest">测试连接</button>
-        </div>
+        <p class="hint warn" id="syncHttpWarn" hidden>当前是 http 地址，账号与收藏会明文传输，建议改用 https。</p>
       </div>
-    </details>
+      <div class="fld">
+        <div class="lbl"><label for="syncUser">用户名</label></div>
+        <div class="inp-row"><input type="text" id="syncUser" autocomplete="off" spellcheck="false"></div>
+      </div>
+      <div class="fld">
+        <div class="lbl"><label for="syncPass">密码</label></div>
+        <div class="inp-row"><input type="password" id="syncPass" autocomplete="off" spellcheck="false"></div>
+        <p class="hint">凭据只存本机（chrome.storage.local），不进导出文件、不写日志。</p>
+      </div>
+      <div class="fld">
+        <div class="lbl"><label for="syncPath">远端路径</label></div>
+        <div class="inp-row"><input type="text" id="syncPath" placeholder="heritage-map/favorites.json" autocomplete="off" spellcheck="false"></div>
+        <p class="hint">相对服务器地址；默认 heritage-map/favorites.json。</p>
+      </div>
+      <div class="hrow sync-acts">
+        <button class="btn primary" type="button" id="syncRun">立即同步</button>
+        <button class="btn sec" type="button" id="syncSave">保存配置</button>
+        <button class="btn sec" type="button" id="syncTest">测试连接</button>
+      </div>
+    </div>
   </div>
 
   <!-- ================= 设置页（原样搬入 tabpanel） ================= -->

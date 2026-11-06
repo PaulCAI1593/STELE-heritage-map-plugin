@@ -223,6 +223,21 @@ html[data-hmp-window="1"],html[data-hmp-window="1"] body{width:100%}
 .sync-status[data-kind="err"]{color:var(--hmp-err-ink)}
 .sync-status[data-kind="busy"]{color:var(--hmp-info-ink)}
 
+/* #59：配置区由按钮就地展开（div[hidden]），不再是 details */
+.sync-cfg{margin:0 12px 4px;padding:8px 10px 10px;border:1px solid var(--hmp-border);
+  border-radius:var(--hmp-r-sm);background:var(--hmp-surface-2);box-shadow:var(--hmp-shadow-sm)}
+.sync-cfg[hidden]{display:none!important}
+.sync-cfg .fld{padding:0;margin-bottom:10px}
+/* #59：状态行带语义图标（成功对勾 / 失败三角），图标只占位一小列，窄屏也不挤压文案 */
+.sync-state{display:flex;align-items:flex-start;gap:4px}
+.sync-state .ic{display:none;flex:0 0 auto;width:14px;height:14px;margin-top:2px}
+.sync-state[data-kind="ok"] .sync-ic-ok{display:block;color:var(--hmp-ok-ink)}
+.sync-state[data-kind="err"] .sync-ic-err{display:block;color:var(--hmp-err-ink)}
+.sync-state .sync-status{margin-top:0;flex:1 1 auto;min-width:0}
+/* #59：三个操作按钮 400/560 同排，空间不足时允许换行但不溢出 */
+.sync-acts{flex-wrap:wrap}
+.sync-acts .btn{flex:0 0 auto}
+
 /* 行内「测试」按钮（F 方案）：固定在标签行右侧 */
 .test-b{flex:0 0 auto;min-height:32px;padding:0 9px;font-size:12.5px;margin-left:2px}
 

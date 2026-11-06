@@ -1380,19 +1380,33 @@
   // ---------------- #53 WebDAV 同步 ----------------
   let syncCfg = null;
   let syncBusy = false;
-  let syncNoticeTimer = null;
 
   // #57 / #58：配置区就在收藏页，未配置时的指引只面向本区，不再跨页指向「开放时间」。
-  const SYNC_LOCAL_GUIDE = '填写地址、用户名与密码后点「保存配置」，再点「同步」。';
+  const SYNC_LOCAL_GUIDE = '请先填写地址并保存配置。';
 
-  /** #58：就地展开收藏页内的 WebDAV 配置区，并聚焦服务器地址。 */
-  function openSyncConfig() {
+  /** #59：展开/收起收藏页内的 WebDAV 配置区，同步维护按钮 aria-expanded。 */
+  function setSyncConfigOpen(open) {
     const box = $('advSync');
-    if (box) box.open = true;
+    const btn = $('favSyncCfg');
+    if (box) box.hidden = !open;
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  /** #59：就地展开配置区并聚焦服务器地址（未配置点「立即同步」时用）。 */
+  function openSyncConfig() {
+    setSyncConfigOpen(true);
     const input = $('syncUrl');
     if (input && typeof input.focus === 'function') input.focus();
+    const box = $('advSync');
     // 真实弹窗高度有限（约 600px），展开后把配置区滚进视野，避免看起来「点了没反应」
     if (box && typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** #59：工具行「WebDAV 同步设置」按钮切换配置区。 */
+  function toggleSyncConfig() {
+    const box = $('advSync');
+    if (box && box.hidden) openSyncConfig();
+    else setSyncConfigOpen(false);
   }
 
   function syncModule() { return window.HMP && window.HMP.favoritesSync; }
@@ -1429,6 +1443,8 @@
     if (!el) return;
     el.textContent = text || '';
     el.dataset.kind = kind || '';
+    const state = $('syncState');
+    if (state) state.dataset.kind = kind || '';
   }
 
   function renderSyncConfig(cfg) {
@@ -1496,12 +1512,12 @@
     if (syncBusy) return { ok: false, reason: 'busy' };
     const cfg = readSyncForm();
     if (!parseSyncOrigin(cfg.url)) {
-      // #58：未配置就地展开收藏页配置区并聚焦地址，状态行给本区指引；不切 Tab、不跨页提示
+      // #59：未配置就地展开配置区、聚焦地址并给提示，不发起请求
       openSyncConfig();
-      setSyncStatus(SYNC_LOCAL_GUIDE, 'info');
+      setSyncStatus(cfg.url ? '服务器地址要以 http:// 或 https:// 开头。' : SYNC_LOCAL_GUIDE, cfg.url ? 'err' : 'info');
       return { ok: false, reason: 'unconfigured' };
     }
-    const btn = $('favSync');
+    const btn = $('syncRun');
     syncBusy = true;
     if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = '同步中…'; }
     setSyncStatus('同步中…', 'busy');
@@ -1514,19 +1530,14 @@
     if (out.ok) {
       const st = out.stats || { added: 0, updated: 0, removed: 0 };
       const text = '已同步：新增 ' + st.added + '、更新 ' + st.updated + '、删除 ' + st.removed;
+      // #59：同步结果只显示在配置区状态行（不再占用列表上方的 favHint）
       setSyncStatus(text, 'ok');
-      favHint = { kind: 'ok', text };
-      renderFavHint();
-      if (syncNoticeTimer) clearTimeout(syncNoticeTimer);
-      syncNoticeTimer = setTimeout(() => {
-        if (favHint && /^已同步/.test(favHint.text || '')) { favHint = null; renderFavHint(); }
-      }, 5000);
       await renderFavorites();
     } else {
       setSyncStatus(mod.syncErrorText(out.reason, out.status), 'err');
     }
     syncBusy = false;
-    if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'WebDAV 同步'; }
+    if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = '立即同步'; }
     return out;
   }
 
@@ -1773,7 +1784,8 @@
 
     bindFavorites();
     bindFavoritesStorageSync();
-    if ($('favSync')) $('favSync').addEventListener('click', () => runSync());
+    if ($('favSyncCfg')) $('favSyncCfg').addEventListener('click', () => toggleSyncConfig());
+    if ($('syncRun')) $('syncRun').addEventListener('click', () => runSync());
     if ($('syncSave')) $('syncSave').addEventListener('click', () => saveSyncConfig());
     if ($('syncTest')) $('syncTest').addEventListener('click', () => testSyncConnection());
     if ($('syncUrl')) $('syncUrl').addEventListener('input', updateSyncHttpWarn);

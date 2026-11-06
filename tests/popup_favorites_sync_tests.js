@@ -62,7 +62,7 @@ const IDS = [
   'favExport', 'favNewForm', 'favRenameForm', 'favNewName', 'favRenameName',
   'favNewOk', 'favNewCancel', 'favRenameOk', 'favRenameCancel',
   'favNewGroup', 'favRenameGroup', 'favDeleteGroup', 'popoutBtn',
-  'favSync', 'syncUrl', 'syncUser', 'syncPass', 'syncPath', 'syncSave', 'syncTest', 'syncStatus', 'syncHttpWarn', 'advSync'
+  'favSyncCfg', 'syncRun', 'syncUrl', 'syncUser', 'syncPass', 'syncPath', 'syncSave', 'syncTest', 'syncStatus', 'syncState', 'syncHttpWarn', 'advSync'
 ];
 const FKEY = 'hmp:favorites:v1';
 
@@ -73,7 +73,8 @@ function build(opts) {
   els.enabled.tagName = 'INPUT'; els.enabled.checked = true;
   els.amapKey.tagName = 'INPUT'; els.baiduAk.tagName = 'INPUT';
   els.defaultProvider.tagName = 'SELECT'; els.strategyMode.tagName = 'SELECT';
-  els.advSync.tagName = 'DETAILS'; els.advSync.open = false;
+  els.advSync.tagName = 'DIV'; els.advSync.hidden = true;
+  els.favSyncCfg.setAttribute('aria-expanded', 'false');
 
   const store = Object.assign({}, o.store || {});
   const domListeners = {};
@@ -513,8 +514,9 @@ function lib(items) {
     const off = await H.popup.sync.run();
     check('#53 未配置：就地展开配置区、聚焦地址、不切 Tab、不请求网络',
       off.ok === false && off.reason === 'unconfigured' &&
-      H.els.advSync.open === true && urlFocused === 1 &&
-      H.els.syncStatus.textContent.indexOf('保存配置') >= 0 &&
+      H.els.advSync.hidden === false && urlFocused === 1 &&
+      H.els.favSyncCfg.getAttribute('aria-expanded') === 'true' &&
+      H.els.syncStatus.textContent.indexOf('请先填写地址并保存配置') >= 0 &&
       H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
       H.popup.favorites.state().activeTab === 'fav');
     H.els.syncUrl.value = 'http://dav.example.com/dav';
@@ -542,13 +544,13 @@ function lib(items) {
     H.els.syncUrl.value = 'https://dav.example.com/dav';
     const runP = H.popup.sync.run();
     check('#53 同步中：按钮 disabled 且 aria-busy=true、文案「同步中…」',
-      H.els.favSync.disabled === true && H.els.favSync.getAttribute('aria-busy') === 'true' &&
-      H.els.favSync.textContent === '同步中…');
+      H.els.syncRun.disabled === true && H.els.syncRun.getAttribute('aria-busy') === 'true' &&
+      H.els.syncRun.textContent === '同步中…');
     const out = await runP;
     check('#53 同步成功：busy 恢复、完成文案、PUT 主文件、本机已写',
-      out.ok === true && H.els.favSync.disabled === false &&
-      H.els.favSync.getAttribute('aria-busy') === null &&
-      H.els.favSync.textContent === 'WebDAV 同步' &&
+      out.ok === true && H.els.syncRun.disabled === false &&
+      H.els.syncRun.getAttribute('aria-busy') === null &&
+      H.els.syncRun.textContent === '立即同步' &&
       H.els.syncStatus.textContent.indexOf('已同步：新增') === 0 &&
       puts.length === 1 && H.store['hmp:favorites:v1'].schema === 2);
 
@@ -573,16 +575,18 @@ function lib(items) {
     check('#58 开放时间页不再有 advSync / WebDAV 入口',
       popupHtml.indexOf('id="advSync"', panelSetStart) < 0 &&
       popupHtml.indexOf('WebDAV 同步设置', panelSetStart) < 0);
-    check('#58 details 默认收起（无 open 属性）、summary 文案「WebDAV 同步设置」',
-      /<details class="adv sync-cfg" id="advSync">\s*<summary>WebDAV 同步设置<\/summary>/.test(popupHtml));
+    check('#58/#59 配置区是普通 div 且默认 hidden（不再是 details）',
+      /<div class="sync-cfg" id="advSync" hidden>/.test(popupHtml) &&
+      !/<details[^>]*id="advSync"/.test(popupHtml) &&
+      !/<summary>WebDAV 同步设置<\/summary>/.test(popupHtml));
 
     const H = build({ store: { hmpTheme: 'paper' } });
     await sleep(30);
-    check('#58 默认状态是本区指引（含「保存配置」「同步」），不含「开放时间」',
-      H.els.syncStatus.textContent.indexOf('保存配置') >= 0 &&
-      H.els.syncStatus.textContent.indexOf('同步') >= 0 &&
+    check('#58/#59 默认状态是「请先填写地址并保存配置」，不含「开放时间」',
+      H.els.syncStatus.textContent.indexOf('请先填写地址并保存配置') >= 0 &&
       H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
-      H.els.syncStatus.dataset.kind === 'info',
+      H.els.syncStatus.dataset.kind === 'info' &&
+      H.els.syncState.dataset.kind === 'info',
       'text=' + H.els.syncStatus.textContent);
 
     // 未配置点同步：就地展开 + 聚焦 + 不切页 + 不弹收藏页提示条
@@ -591,7 +595,7 @@ function lib(items) {
     const off = await H.popup.sync.run();
     check('#58 未配置点同步：就地展开配置区、聚焦地址、不跳「开放时间」页',
       off.ok === false && off.reason === 'unconfigured' &&
-      H.els.advSync.open === true && urlFocused === 1 &&
+      H.els.advSync.hidden === false && urlFocused === 1 &&
       H.popup.favorites.state().activeTab === 'fav' &&
       H.els.favHint.hidden === true);
     check('#58 展开后状态行是本区指引、不出现跨页文案',
@@ -623,7 +627,7 @@ function lib(items) {
       /\.band\.b-ok \.ic-ok\{display:block\}/.test(popupCss) &&
       /\.band\.b-info \.ic-info\{display:block\}/.test(popupCss) &&
       /FAV_HINT_CLASS = \{ ok: 'b-ok'/.test(popupJs) &&
-      /favHint = \{ kind: 'ok', text \}/.test(popupJs));
+      /setSyncStatus\(text, 'ok'\)/.test(popupJs));
 
     const H = build({ store: { hmpTheme: 'paper' } });
     await sleep(30);
@@ -676,6 +680,78 @@ function lib(items) {
       'addr=' + count(t1, '北京市东城区景山前街4号') + ' snap=' + (snap1 && snap1.textContent));
     check('#56 未匹配条目不回退成地址（源码不再用 item.address 兜底 fsnap）',
       !/: \(item\.address \|\| ''\);/.test(popupJs));
+  }
+
+  console.log('\n=== #59 工具行合并与同步入口调整 ===');
+  {
+    // 静态结构：工具行只剩两个按钮，且不再有 #favSync
+    const toolsHtml = (popupHtml.match(/<div class="fav-tools">([\s\S]*?)<\/div>/) || [])[1] || '';
+    const btnIds = [...toolsHtml.matchAll(/id="([^"]+)"/g)].map(m => m[1]);
+    check('#59 工具行恰 2 个按钮：WebDAV 同步设置 + 导出收藏',
+      btnIds.length === 2 && btnIds[0] === 'favSyncCfg' && btnIds[1] === 'favExport' &&
+      toolsHtml.indexOf('WebDAV 同步设置') >= 0 && toolsHtml.indexOf('导出收藏') >= 0 &&
+      popupHtml.indexOf('id="favSync"') < 0,
+      'ids=' + JSON.stringify(btnIds));
+    check('#59 工具行按钮带 aria-expanded=false / aria-controls=advSync',
+      /id="favSyncCfg"[^>]*aria-expanded="false"[^>]*aria-controls="advSync"/.test(toolsHtml));
+    check('#59 配置区默认 hidden，「立即同步」在配置区内且三按钮同排',
+      /<div class="sync-cfg" id="advSync" hidden>/.test(popupHtml) &&
+      /<div class="hrow sync-acts">\s*<button class="btn primary" type="button" id="syncRun">立即同步<\/button>\s*<button class="btn sec" type="button" id="syncSave">保存配置<\/button>\s*<button class="btn sec" type="button" id="syncTest">测试连接<\/button>/.test(popupHtml) &&
+      /\.sync-acts\{flex-wrap:wrap\}/.test(popupCss) &&
+      /\.sync-state\[data-kind="ok"\] \.sync-ic-ok\{display:block/.test(popupCss));
+
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    check('#59 初始：配置区 hidden、按钮 aria-expanded=false',
+      H.els.advSync.hidden === true && H.els.favSyncCfg.getAttribute('aria-expanded') === 'false');
+    H.els.favSyncCfg.click();
+    check('#59 点「WebDAV 同步设置」就地展开（hidden=false、aria-expanded=true）',
+      H.els.advSync.hidden === false && H.els.favSyncCfg.getAttribute('aria-expanded') === 'true');
+    H.els.favSyncCfg.click();
+    check('#59 再点收起（hidden=true、aria-expanded=false）',
+      H.els.advSync.hidden === true && H.els.favSyncCfg.getAttribute('aria-expanded') === 'false');
+
+    // 未配置点「立即同步」：展开 + 聚焦 + 状态行提示，不发请求
+    H.els.favSyncCfg.click();
+    let fetches = 0;
+    let focused = 0;
+    H.els.syncUrl.focus = () => { focused++; };
+    global.fetch = async () => { fetches++; return { ok: true, status: 200, text: async () => '{}' }; };
+    const off = await H.popup.sync.run();
+    delete global.fetch;
+    check('#59 未配置点立即同步：不请求、状态行「请先填写地址并保存配置」、聚焦地址',
+      off.ok === false && off.reason === 'unconfigured' && fetches === 0 && focused === 1 &&
+      H.els.syncStatus.textContent === '请先填写地址并保存配置。' &&
+      H.els.syncStatus.dataset.kind === 'info' && H.els.advSync.hidden === false,
+      'text=' + H.els.syncStatus.textContent);
+
+    // 地址非法（非空）：错误提示，同样不发请求
+    H.els.syncUrl.value = 'dav.example.com';
+    let fetches2 = 0;
+    global.fetch = async () => { fetches2++; return { ok: true, status: 200, text: async () => '{}' }; };
+    const bad = await H.popup.sync.run();
+    delete global.fetch;
+    check('#59 地址非法：错误提示且不发请求',
+      bad.ok === false && fetches2 === 0 && H.els.syncStatus.dataset.kind === 'err' &&
+      H.els.syncStatus.textContent.indexOf('http://') >= 0,
+      'text=' + H.els.syncStatus.textContent);
+
+    // 成功：结果只写在配置区状态行（绿字 + 对勾），不占用列表上方 favHint
+    H.els.syncUrl.value = 'https://dav.example.com/dav';
+    global.fetch = async (u, o) => {
+      const method = (o && o.method) || 'GET';
+      return (method === 'GET' || method === 'HEAD')
+        ? { ok: false, status: 404, text: async () => '' }
+        : { ok: true, status: 201, text: async () => '' };
+    };
+    const out = await H.popup.sync.run();
+    delete global.fetch;
+    check('#59 成功：状态行绿字对勾统计，favHint 不再被占用',
+      out.ok === true &&
+      /^已同步：新增 0、更新 0、删除 0$/.test(H.els.syncStatus.textContent) &&
+      H.els.syncStatus.dataset.kind === 'ok' && H.els.syncState.dataset.kind === 'ok' &&
+      H.els.favHint.hidden === true,
+      'text=' + H.els.syncStatus.textContent + ' hintHidden=' + H.els.favHint.hidden);
   }
 
   finish();

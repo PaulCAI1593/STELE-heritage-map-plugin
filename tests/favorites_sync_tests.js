@@ -221,8 +221,12 @@ const lib = (groups, items, tombstones) => ({
   // 静态：UI 入口与权限（不读 DOM，只读源文件文本）
   const html = fs.readFileSync(path.join(env.SRC, 'popup/popup.html'), 'utf8');
   const manifest = JSON.parse(fs.readFileSync(path.join(env.SRC, 'manifest.json'), 'utf8'));
-  check('UI：收藏页同步按钮在导出左边、设置页有密码字段',
-    /id="favSync"[\s\S]{0,120}id="favExport"/.test(html) &&
+  // #59：工具行只有「WebDAV 同步设置 / 导出收藏」两个按钮，配置区里有「立即同步」
+  check('UI：收藏页工具行两个按钮 + 配置区立即同步 + 密码字段',
+    /id="favSyncCfg"[\s\S]{0,200}id="favExport"/.test(html) &&
+    html.indexOf('id="favSync"') < 0 &&
+    /<div class="sync-cfg" id="advSync" hidden>/.test(html) &&
+    /id="syncRun">立即同步</.test(html) &&
     /<input type="password" id="syncPass"/.test(html) &&
     /id="syncSave"/.test(html) && /id="syncTest"/.test(html));
   check('权限：optional_host_permissions 含 http/https，host_permissions 无全量通配',
@@ -236,7 +240,7 @@ const lib = (groups, items, tombstones) => ({
   check('UI 源码：busy 恢复、aria-busy、权限申请、凭据键',
     popupJs.indexOf("setAttribute('aria-busy', 'true')") >= 0 &&
     popupJs.indexOf("'同步中…'") >= 0 &&
-    popupJs.indexOf("textContent = 'WebDAV 同步'") >= 0 &&
+    popupJs.indexOf("textContent = '立即同步'") >= 0 &&
     popupJs.indexOf("origins: [origin + '/*']") >= 0 &&
     popupJs.indexOf("'hmp:webdav'") >= 0);
   // #58：未配置改为就地展开收藏页配置区，跨页文案与跳页逻辑已删除
@@ -246,7 +250,7 @@ const lib = (groups, items, tombstones) => ({
     /activateTab\('set'\)/.test(popupJs) === false &&
     popupJs.indexOf('/^http:\\/\\//i') >= 0 &&
     popupJs.indexOf("'已同步：新增 '") >= 0 &&
-    popupJs.indexOf('5000') >= 0);
+    /setSyncStatus\(text, 'ok'\)/.test(popupJs));
 
   finish();
 })();
