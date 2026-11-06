@@ -9,7 +9,9 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "https://restapi.amap.com/*",
     "https://api.map.baidu.com/*",
@@ -17,21 +19,22 @@
     "https://cdn.jsdelivr.net/*"
   ],
   "action": {
-    "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
     },
-    "default_title": "遗产地图插件 — 配置 Key"
+    "default_title": "遗产地图插件 — 打开配置与收藏"
   },
   "background": {
     "service_worker": "background/service-worker.js"
   },
   "content_scripts": [
     {
-      "matches": ["*://stele.geogv.org/zhcn/*"],
+      "matches": [
+        "*://stele.geogv.org/zhcn/*"
+      ],
       "js": [
         "shared/favorites-store.js",
         "content/decoder.js",
@@ -47,7 +50,9 @@
         "content/card.js",
         "content/content.js"
       ],
-      "css": ["content/content.css"],
+      "css": [
+        "content/content.css"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }

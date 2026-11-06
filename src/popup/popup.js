@@ -1524,6 +1524,18 @@
     refreshCacheInfo
   };
 
+  // #43：工具栏图标打开的是独立小窗（service worker 加 ?window=1）。
+  // 只有该模式铺满窗口宽度；普通扩展弹窗（若以后恢复 default_popup）仍走 400 固定宽。
+  function applyWindowMode() {
+    try {
+      const q = (window.location && window.location.search) || '';
+      if (/(?:^|[?&])window=1(?:&|$)/.test(q) && document.documentElement) {
+        document.documentElement.dataset.hmpWindow = '1';
+      }
+    } catch (e) { /* 忽略 */ }
+  }
+
+  applyWindowMode();
   initTheme();
   document.addEventListener('DOMContentLoaded', () => { bind(); load(); });
 })();

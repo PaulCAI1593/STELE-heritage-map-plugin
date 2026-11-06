@@ -4,7 +4,7 @@
   "private": true,
   "description": "在 STELE 中国遗产地图的文保点位详情页，叠加高德/百度地图的开放时间、票价与地址（开发期工具与测试；扩展本体在 src/，无需构建）",
   "scripts": {
-    "test": "node tests/run_tests.js && node tests/name_evidence_tests.js && node tests/scoring_v2_tests.js && node tests/facility_tests.js && node tests/merchant_tests.js && node tests/community_exact_tests.js && node tests/shortform_tests.js && node tests/type_conflict_tests.js && node tests/favorites_store_tests.js && node tests/popup_favorites_tests.js && node tests/popup_favorites_sync_tests.js && node tests/content_steleid_tests.js && node tests/http_timeout_tests.js && node tests/manifest_tests.js && node tests/cache_ttl_tests.js && node tests/evidence_tests.js && node tests/card_style_tests.js && node tests/popup_ui_tests.js && node tests/popup_keytest_tests.js && node tests/popup_size_tests.js && node tests/update_state_tests.js && node tests/decision_log_tests.js && node tests/backtest_matching_tests.js && node tests/baidu_parity_tests.js && node tests/fields_tests.js && node tests/geo_tests.js && node tests/renamed_tests.js && node tests/group_tests.js && node tests/combine_tests.js && node tests/quality_tests.js && node tests/api_tests.js && node tests/regression_tests.js && node tests/inject_tests.js && node tests/switch_tests.js && node tests/smoke.js",
+    "test": "node tests/run_tests.js && node tests/name_evidence_tests.js && node tests/scoring_v2_tests.js && node tests/facility_tests.js && node tests/merchant_tests.js && node tests/community_exact_tests.js && node tests/shortform_tests.js && node tests/type_conflict_tests.js && node tests/favorites_store_tests.js && node tests/popup_favorites_tests.js && node tests/popup_favorites_sync_tests.js && node tests/background_window_tests.js && node tests/content_steleid_tests.js && node tests/http_timeout_tests.js && node tests/manifest_tests.js && node tests/cache_ttl_tests.js && node tests/evidence_tests.js && node tests/card_style_tests.js && node tests/popup_ui_tests.js && node tests/popup_keytest_tests.js && node tests/popup_size_tests.js && node tests/update_state_tests.js && node tests/decision_log_tests.js && node tests/backtest_matching_tests.js && node tests/baidu_parity_tests.js && node tests/fields_tests.js && node tests/geo_tests.js && node tests/renamed_tests.js && node tests/group_tests.js && node tests/combine_tests.js && node tests/quality_tests.js && node tests/api_tests.js && node tests/regression_tests.js && node tests/inject_tests.js && node tests/switch_tests.js && node tests/smoke.js",
     "test:match": "node tests/run_tests.js",
     "test:geo": "node tests/geo_tests.js",
     "test:renamed": "node tests/renamed_tests.js",
@@ -40,7 +40,8 @@
     "test:favorites": "node tests/favorites_store_tests.js",
     "test:popupfav": "node tests/popup_favorites_tests.js",
     "test:popupfavsync": "node tests/popup_favorites_sync_tests.js",
-    "test:steleid": "node tests/content_steleid_tests.js"
+    "test:steleid": "node tests/content_steleid_tests.js",
+    "test:window": "node tests/background_window_tests.js"
   },
   "engines": {
     "node": ">=14"

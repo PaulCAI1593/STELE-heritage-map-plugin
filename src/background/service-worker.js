@@ -37,6 +37,80 @@ self.addEventListener('activate', () => {
 
 console.log('[HMP] service worker 已启动');
 
+// ── #43 点工具栏图标开独立小窗（常驻到关窗）──
+// 不用侧边栏：windows.create 一个 440×640 的 popup 窗口；再点图标若窗口还在就聚焦。
+// chrome.windows.* 不需要任何权限；windowId 用 storage.session 记（SW 重启也能找到），
+// 没有 storage.session 的环境退化为内存变量，不影响再次打开。
+const PANEL_WINDOW_KEY = 'hmp:panelWindowId';
+let panelWindowIdMemory = null;
+
+function getPanelWindowId(cb) {
+  try {
+    if (chrome.storage && chrome.storage.session) {
+      chrome.storage.session.get([PANEL_WINDOW_KEY], items => {
+        const v = items && items[PANEL_WINDOW_KEY];
+        cb(v == null ? null : v);
+      });
+      return;
+    }
+  } catch (e) { /* 退化到内存 */ }
+  cb(panelWindowIdMemory);
+}
+
+function rememberPanelWindowId(id) {
+  panelWindowIdMemory = id;
+  try {
+    if (chrome.storage && chrome.storage.session) {
+      chrome.storage.session.set({ [PANEL_WINDOW_KEY]: id });
+    }
+  } catch (e) { /* 忽略：下次点击会走 create */ }
+}
+
+function forgetPanelWindowId() {
+  panelWindowIdMemory = null;
+  try {
+    if (chrome.storage && chrome.storage.session) {
+      chrome.storage.session.remove(PANEL_WINDOW_KEY);
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+function createPanelWindow() {
+  const url = chrome.runtime.getURL('popup/popup.html') + '?window=1';
+  try {
+    chrome.windows.create({ url, type: 'popup', width: 440, height: 640 }, win => {
+      if (win && win.id != null) rememberPanelWindowId(win.id);
+    });
+  } catch (e) { console.log('[HMP] 打开小窗失败:', String(e && e.message || e)); }
+}
+
+function focusOrCreatePanel() {
+  getPanelWindowId(id => {
+    if (id == null) { createPanelWindow(); return; }
+    try {
+      chrome.windows.get(id, win => {
+        const err = chrome.runtime.lastError;
+        if (err || !win) { createPanelWindow(); return; }
+        try {
+          chrome.windows.update(id, { focused: true });
+        } catch (e) { createPanelWindow(); }
+      });
+    } catch (e) { createPanelWindow(); }
+  });
+}
+
+if (chrome.action && chrome.action.onClicked) {
+  chrome.action.onClicked.addListener(() => focusOrCreatePanel());
+}
+
+if (chrome.windows && chrome.windows.onRemoved) {
+  chrome.windows.onRemoved.addListener(id => {
+    getPanelWindowId(cur => {
+      if (cur != null && (cur === id || String(cur) === String(id))) forgetPanelWindowId();
+    });
+  });
+}
+
 // ── 跨域请求代理 ──
 // MV3 起内容脚本的 fetch 受宿主页面 CORS 约束，host_permissions 不再豁免。
 // 高德接口带 Access-Control-Allow-Origin 所以直连能通，百度接口不带 → 被拦。
