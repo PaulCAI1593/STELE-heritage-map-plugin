@@ -143,7 +143,7 @@ function build(opts) {
         },
       },
     },
-    runtime: { getManifest: () => ({ version: '0.5.2' }), getURL: p => 'chrome-extension://test/' + p },
+    runtime: { getManifest: () => ({ version: '0.5.3' }), getURL: p => 'chrome-extension://test/' + p },
     permissions: {
       _req: [],
       request(args, cb) { this._req.push(args); if (cb) { cb(o.permissionsGranted !== false); return undefined; } return Promise.resolve(o.permissionsGranted !== false); },
