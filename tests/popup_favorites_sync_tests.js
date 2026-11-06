@@ -124,7 +124,7 @@ function build(opts) {
         },
       },
     },
-    runtime: { getManifest: () => ({ version: '0.5.0' }) },
+    runtime: { getManifest: () => ({ version: '0.5.1' }) },
     tabs: {
       query(q, cb) {
         tabCalls.query.push(q);
