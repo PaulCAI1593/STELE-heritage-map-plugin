@@ -1382,10 +1382,18 @@
   let syncBusy = false;
   let syncNoticeTimer = null;
 
-  // #57：设置页本区指引（用户已在 WebDAV 配置区，不再跨页指向自己）
-  const SYNC_LOCAL_GUIDE = '填写地址、用户名与密码后点「保存配置」，再点「测试连接」。';
-  // #57：跨页指引只用于「收藏页点同步且未配置」这一条路径
-  const SYNC_CROSS_GUIDE = '请先在「开放时间 → WebDAV 同步」配置服务器地址与账号。';
+  // #57 / #58：配置区就在收藏页，未配置时的指引只面向本区，不再跨页指向「开放时间」。
+  const SYNC_LOCAL_GUIDE = '填写地址、用户名与密码后点「保存配置」，再点「同步」。';
+
+  /** #58：就地展开收藏页内的 WebDAV 配置区，并聚焦服务器地址。 */
+  function openSyncConfig() {
+    const box = $('advSync');
+    if (box) box.open = true;
+    const input = $('syncUrl');
+    if (input && typeof input.focus === 'function') input.focus();
+    // 真实弹窗高度有限（约 600px），展开后把配置区滚进视野，避免看起来「点了没反应」
+    if (box && typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'nearest' });
+  }
 
   function syncModule() { return window.HMP && window.HMP.favoritesSync; }
 
@@ -1488,11 +1496,9 @@
     if (syncBusy) return { ok: false, reason: 'busy' };
     const cfg = readSyncForm();
     if (!parseSyncOrigin(cfg.url)) {
-      // 收藏页点同步：跨页指引留在收藏页提示条，设置页只显示本区指引
-      favHint = { kind: 'info', text: SYNC_CROSS_GUIDE };
-      renderFavHint();
+      // #58：未配置就地展开收藏页配置区并聚焦地址，状态行给本区指引；不切 Tab、不跨页提示
+      openSyncConfig();
       setSyncStatus(SYNC_LOCAL_GUIDE, 'info');
-      activateTab('set');
       return { ok: false, reason: 'unconfigured' };
     }
     const btn = $('favSync');

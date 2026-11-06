@@ -62,7 +62,7 @@ const IDS = [
   'favExport', 'favNewForm', 'favRenameForm', 'favNewName', 'favRenameName',
   'favNewOk', 'favNewCancel', 'favRenameOk', 'favRenameCancel',
   'favNewGroup', 'favRenameGroup', 'favDeleteGroup', 'popoutBtn',
-  'favSync', 'syncUrl', 'syncUser', 'syncPass', 'syncPath', 'syncSave', 'syncTest', 'syncStatus', 'syncHttpWarn'
+  'favSync', 'syncUrl', 'syncUser', 'syncPass', 'syncPath', 'syncSave', 'syncTest', 'syncStatus', 'syncHttpWarn', 'advSync'
 ];
 const FKEY = 'hmp:favorites:v1';
 
@@ -73,6 +73,7 @@ function build(opts) {
   els.enabled.tagName = 'INPUT'; els.enabled.checked = true;
   els.amapKey.tagName = 'INPUT'; els.baiduAk.tagName = 'INPUT';
   els.defaultProvider.tagName = 'SELECT'; els.strategyMode.tagName = 'SELECT';
+  els.advSync.tagName = 'DETAILS'; els.advSync.open = false;
 
   const store = Object.assign({}, o.store || {});
   const domListeners = {};
@@ -506,13 +507,16 @@ function lib(items) {
   {
     const H = build({ store: { hmpTheme: 'paper' } });
     await sleep(30);
-    // 未配置：引导到开放时间页，不发起请求（#57 后：跨页指引在收藏页提示条，设置页状态只给本区指引）
+    // 未配置：就地展开收藏页配置区并聚焦地址，不切 Tab、不请求网络（#58）
+    let urlFocused = 0;
+    H.els.syncUrl.focus = () => { urlFocused++; };
     const off = await H.popup.sync.run();
-    check('#53 未配置：收藏页提示去开放时间配置、设置页不跨页自指、不请求网络',
+    check('#53 未配置：就地展开配置区、聚焦地址、不切 Tab、不请求网络',
       off.ok === false && off.reason === 'unconfigured' &&
-      H.els.favHintText.textContent.indexOf('开放时间 → WebDAV 同步') >= 0 &&
+      H.els.advSync.open === true && urlFocused === 1 &&
+      H.els.syncStatus.textContent.indexOf('保存配置') >= 0 &&
       H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
-      H.popup.favorites.state().activeTab === 'set');
+      H.popup.favorites.state().activeTab === 'fav');
     H.els.syncUrl.value = 'http://dav.example.com/dav';
     H.els.syncUser.value = 'u';
     H.els.syncPass.value = 'p';
@@ -555,38 +559,49 @@ function lib(items) {
     delete global.fetch;
   }
 
-  console.log('\n=== #57 同步提示文案（设置页不再自指） ===');
+  console.log('\n=== #57/#58 配置区在收藏页（就地展开，不跳页） ===');
   {
+    // 结构：配置区只在收藏页 panel-fav，开放时间页没有
+    const panelFavStart = popupHtml.indexOf('id="panel-fav"');
+    const panelSetStart = popupHtml.indexOf('id="panel-set"');
+    const advAt = popupHtml.indexOf('id="advSync"');
+    const favEnd = popupHtml.indexOf('id="panel-set"');
+    check('#58 配置区在收藏页 panel-fav 内（fav-tools 之后）',
+      advAt > panelFavStart && advAt < favEnd &&
+      popupHtml.indexOf('class="fav-tools"') < advAt,
+      'advAt=' + advAt + ' favStart=' + panelFavStart + ' setStart=' + panelSetStart);
+    check('#58 开放时间页不再有 advSync / WebDAV 入口',
+      popupHtml.indexOf('id="advSync"', panelSetStart) < 0 &&
+      popupHtml.indexOf('WebDAV 同步设置', panelSetStart) < 0);
+    check('#58 details 默认收起（无 open 属性）、summary 文案「WebDAV 同步设置」',
+      /<details class="adv sync-cfg" id="advSync">\s*<summary>WebDAV 同步设置<\/summary>/.test(popupHtml));
+
     const H = build({ store: { hmpTheme: 'paper' } });
     await sleep(30);
-    // 设置页初始（未配置）：本区操作指引，不含「开放时间」跨页指引
-    check('#57 设置页未配置时：状态行是本区指引、不自我指向',
+    check('#58 默认状态是本区指引（含「保存配置」「同步」），不含「开放时间」',
       H.els.syncStatus.textContent.indexOf('保存配置') >= 0 &&
-      H.els.syncStatus.textContent.indexOf('测试连接') >= 0 &&
+      H.els.syncStatus.textContent.indexOf('同步') >= 0 &&
       H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
       H.els.syncStatus.dataset.kind === 'info',
       'text=' + H.els.syncStatus.textContent);
-    // 收藏页点同步且未配置：跨页指引仍在收藏页提示条，设置页同步显示本区指引
-    H.popup.favorites.activateTab('fav', false);
+
+    // 未配置点同步：就地展开 + 聚焦 + 不切页 + 不弹收藏页提示条
+    let urlFocused = 0;
+    H.els.syncUrl.focus = () => { urlFocused++; };
     const off = await H.popup.sync.run();
-    check('#57 收藏页未配置点同步：跨页指引只出现在收藏页提示条（info 样式）',
+    check('#58 未配置点同步：就地展开配置区、聚焦地址、不跳「开放时间」页',
       off.ok === false && off.reason === 'unconfigured' &&
-      H.els.favHint.hidden === false &&
-      H.els.favHint.className === 'band b-info' &&
-      H.els.favHintText.textContent.indexOf('开放时间 → WebDAV 同步') >= 0,
-      'cls=' + H.els.favHint.className + ' text=' + H.els.favHintText.textContent);
-    check('#57 同一路径下设置页状态行不含跨页指引',
-      H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
+      H.els.advSync.open === true && urlFocused === 1 &&
+      H.popup.favorites.state().activeTab === 'fav' &&
+      H.els.favHint.hidden === true);
+    check('#58 展开后状态行是本区指引、不出现跨页文案',
       H.els.syncStatus.textContent.indexOf('保存配置') >= 0 &&
-      H.popup.favorites.state().activeTab === 'set');
-    // 静态：跨页文案只出现一处，且只挂在未配置分支
-    const crossCount = (popupJs.match(/开放时间 → WebDAV 同步/g) || []).length;
-    check('#57 源码里跨页文案只有 1 处（常量），默认状态用本区指引',
-      crossCount === 1 &&
-      /const SYNC_CROSS_GUIDE = '请先在「开放时间 → WebDAV 同步」配置服务器地址与账号。'/.test(popupJs) &&
-      /setSyncStatus\(syncCfg \? '' : SYNC_LOCAL_GUIDE, 'info'\)/.test(popupJs),
-      'crossCount=' + crossCount);
-    check('#57 默认状态不再写「未配置」字面量', !/setSyncStatus\(syncCfg \? '' : '未配置'/.test(popupJs));
+      H.els.syncStatus.textContent.indexOf('开放时间') < 0);
+    // 静态：跨页指引常量已删除，代码不再 activateTab('set') 跳页
+    check('#58 源码已删除 SYNC_CROSS_GUIDE 与未配置跳页',
+      !/SYNC_CROSS_GUIDE/.test(popupJs) &&
+      /activateTab\('set'\)/.test(popupJs) === false &&
+      /\u8bf7\u5148\u5728/.test(popupJs) === false);
   }
 
   console.log('\n=== #56 三处 UI 修复：label 竖排 / 成功样式 / 地址重复 ===');

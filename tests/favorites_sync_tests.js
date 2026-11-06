@@ -239,8 +239,11 @@ const lib = (groups, items, tombstones) => ({
     popupJs.indexOf("textContent = 'WebDAV 同步'") >= 0 &&
     popupJs.indexOf("origins: [origin + '/*']") >= 0 &&
     popupJs.indexOf("'hmp:webdav'") >= 0);
-  check('UI 源码：未配置引导 + http 明文警告 + 完成文案',
-    popupJs.indexOf('请先在「开放时间 → WebDAV 同步」配置') >= 0 &&
+  // #58：未配置改为就地展开收藏页配置区，跨页文案与跳页逻辑已删除
+  check('UI 源码：未配置就地展开配置区 + http 明文警告 + 完成文案',
+    /function openSyncConfig\(\)/.test(popupJs) &&
+    popupJs.indexOf('请先在「开放时间') < 0 &&
+    /activateTab\('set'\)/.test(popupJs) === false &&
     popupJs.indexOf('/^http:\\/\\//i') >= 0 &&
     popupJs.indexOf("'已同步：新增 '") >= 0 &&
     popupJs.indexOf('5000') >= 0);
