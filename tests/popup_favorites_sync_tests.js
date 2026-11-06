@@ -135,10 +135,32 @@ function build(opts) {
       update(id, props, cb) {
         tabCalls.update.push({ id, props });
         if (o.tabsUpdate) return o.tabsUpdate(id, props, cb);
+        // 真实 Chrome 的 runtime.lastError 只在对应 API 回调内有效；每次回调前清空，
+        // 避免上一条（如 getLastFocused）的 lastError 泄漏到同步嵌套的 update 回调里。
+        if (typeof chrome !== 'undefined' && chrome.runtime) chrome.runtime.lastError = undefined;
         if (cb) cb();
         return undefined;
       },
       create(p) { tabCalls.create.push(p); },
+      getCurrent(cb) {
+        tabCalls.getCurrent = (tabCalls.getCurrent || 0) + 1;
+        if (cb) cb(o.getCurrentId != null ? { id: o.getCurrentId } : null);
+      },
+    },
+    windows: {
+      getLastFocused(args, cb) {
+        tabCalls.getLastFocused = (tabCalls.getLastFocused || 0) + 1;
+        if (o.getLastFocusedThrows) throw new Error('getLastFocused failed');
+        if (o.getLastFocusedErr) {
+          chrome.runtime.lastError = { message: 'no normal window' };
+          if (cb) cb(undefined);
+          chrome.runtime.lastError = undefined;
+          return undefined;
+        }
+        const win = o.getLastFocusedWin === undefined ? { id: 3 } : o.getLastFocusedWin;
+        if (cb) cb(win);
+        return undefined;
+      },
     },
   };
 
@@ -249,7 +271,7 @@ function lib(items) {
       f.undoText({ items: [{ item: { name: '甲' } }, { item: { name: '乙' } }, {}] }) === '已取消收藏 3 条');
   }
 
-  console.log('\n=== #42 定位：当前标签页打开，失败/无标签退回新开 ===');
+  console.log('\n=== #45 定位：普通窗口当前标签打开、不关窗 ===');
   const oneFav = lib([
     { steleId: 'abc123', name: '龙华寺', address: '龙华路2853号', groupId: 'g-want', savedAt: 1000 },
   ]);
@@ -261,62 +283,79 @@ function lib(items) {
   const DEEP = 'https://stele.geogv.org/zhcn/geo/abc123';
 
   {
-    const H = build({ store: { hmpTheme: 'paper' } });
+    const H = build({ store: { hmpTheme: 'paper' }, getCurrentId: 99 });
     await sleep(30);
     const main = await seedOne(H);
     main.click();
-    check('#42 有当前标签：只调 update(id,{url})，不调 create',
+    const q = H.tabCalls.query[0] || {};
+    check('#45 有普通窗口：按 windowId 查询，不再用 currentWindow',
+      q.active === true && q.windowId === 3 && q.currentWindow === undefined,
+      'query=' + JSON.stringify(H.tabCalls.query));
+    check('#45 有普通窗口：update 目标标签并保留窗口（create 0、close 0）',
       H.tabCalls.update.length === 1 && H.tabCalls.update[0].id === 7 &&
-      H.tabCalls.update[0].props.url === DEEP && H.tabCalls.create.length === 0,
-      'update=' + JSON.stringify(H.tabCalls.update) + ' create=' + H.tabCalls.create.length);
-    check('#42 有当前标签：query 为 active+currentWindow，成功后关弹窗',
-      H.tabCalls.query.length === 1 && H.tabCalls.query[0].active === true &&
-      H.tabCalls.query[0].currentWindow === true && H.closeCount() === 1,
-      'query=' + JSON.stringify(H.tabCalls.query) + ' closes=' + H.closeCount());
+      H.tabCalls.update[0].props.url === DEEP && H.tabCalls.create.length === 0 && H.closeCount() === 0,
+      'update=' + JSON.stringify(H.tabCalls.update) + ' create=' + H.tabCalls.create.length + ' closes=' + H.closeCount());
   }
 
   {
-    const H = build({ store: { hmpTheme: 'paper' }, tabsUpdate: () => { throw new Error('denied'); } });
+    const H = build({ store: { hmpTheme: 'paper' }, getCurrentId: 99, tabsUpdate: () => { throw new Error('denied'); } });
     await sleep(30);
     const main = await seedOne(H);
     main.click();
-    check('#42 update 抛错：退回 create 一次、不关弹窗',
+    check('#45 update 失败：退回 create 一次、仍不关窗',
       H.tabCalls.update.length === 1 && H.tabCalls.create.length === 1 &&
       H.tabCalls.create[0].url === DEEP && H.closeCount() === 0,
-      'update=' + H.tabCalls.update.length + ' create=' + JSON.stringify(H.tabCalls.create) + ' closes=' + H.closeCount());
+      'update=' + H.tabCalls.update.length + ' create=' + H.tabCalls.create.length + ' closes=' + H.closeCount());
   }
 
   {
-    const H = build({ store: { hmpTheme: 'paper' }, tabsQuery: (q, cb) => cb([]) });
+    const H = build({ store: { hmpTheme: 'paper' }, getCurrentId: 99, getLastFocusedErr: true, tabsQuery: (q, cb) => cb([]) });
     await sleep(30);
     const main = await seedOne(H);
     main.click();
-    check('#42 无当前标签（受限页）：退回 create 一次、不调 update',
-      H.tabCalls.query.length === 1 && H.tabCalls.update.length === 0 &&
-      H.tabCalls.create.length === 1 && H.tabCalls.create[0].url === DEEP,
-      'update=' + H.tabCalls.update.length + ' create=' + JSON.stringify(H.tabCalls.create));
+    check('#45 无普通窗口且无标签：新开一次、不关窗',
+      H.tabCalls.create.length === 1 && H.tabCalls.update.length === 0 && H.closeCount() === 0,
+      'create=' + H.tabCalls.create.length + ' update=' + H.tabCalls.update.length + ' closes=' + H.closeCount());
   }
 
   {
-    const H = build({ store: { hmpTheme: 'paper' } });
+    const H = build({
+      store: { hmpTheme: 'paper' }, getCurrentId: 99, getLastFocusedErr: true,
+      tabsQuery: (q, cb) => {
+        if (q.lastFocusedWindow) { cb([]); return; }
+        if (q.windowId != null) { cb([]); return; }
+        cb([{ id: 99 }, { id: 9 }]);
+      },
+    });
+    await sleep(30);
+    const main = await seedOne(H);
+    main.click();
+    check('#45 选中插件自身标签时跳过，改选下一个普通标签',
+      H.tabCalls.update.length === 1 && H.tabCalls.update[0].id === 9 &&
+      H.tabCalls.create.length === 0 && H.closeCount() === 0,
+      'update=' + JSON.stringify(H.tabCalls.update) + ' closes=' + H.closeCount() + ' create=' + JSON.stringify(H.tabCalls.create) + ' queries=' + JSON.stringify(H.tabCalls.query));
+  }
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' }, getCurrentId: 99 });
     await sleep(30);
     const main = await seedOne(H);
     const li = H.els.favList.children[0];
     const amapBtn = li.children[1].children[0].children[0];
     amapBtn.click();
-    check('#42 外部地图链接（高德）仍 create、不 update 当前页',
+    check('#45 外部地图链接（高德）仍 create、不 update、不关窗',
       H.tabCalls.create.length === 1 && /uri\.amap\.com/.test(H.tabCalls.create[0].url) &&
-      H.tabCalls.update.length === 0 && H.tabCalls.query.length === 0,
+      H.tabCalls.update.length === 0 && H.tabCalls.query.length === 0 && H.closeCount() === 0,
       'create=' + JSON.stringify(H.tabCalls.create) + ' update=' + H.tabCalls.update.length);
   }
 
   {
     const perms = [].concat(manifest.permissions || [], manifest.host_permissions || []);
-    check('#42 未新增 tabs 权限', perms.indexOf('tabs') === -1, 'permissions=' + JSON.stringify(perms));
-    check('#42 源码走 tabs.query + tabs.update 路径',
-      popupJs.indexOf("chrome.tabs.query({ active: true, currentWindow: true }") !== -1 ||
-      popupJs.indexOf('tabs.query({ active: true, currentWindow: true }') !== -1,
-      'query call missing');
+    check('#45 未新增 tabs 权限', perms.indexOf('tabs') === -1, 'permissions=' + JSON.stringify(perms));
+    check('#45 源码用 getLastFocused({windowTypes:[normal]}) 取普通窗口',
+      popupJs.indexOf("getLastFocused({ windowTypes: ['normal'] }") !== -1);
+    check('#45 源码不再用 currentWindow 定位', popupJs.indexOf('currentWindow: true') === -1);
+    check('#45 源码不再调用 window.close()', popupJs.indexOf('window.close()') === -1);
   }
 
   finish();

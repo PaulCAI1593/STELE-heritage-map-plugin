@@ -802,51 +802,115 @@
     try { chrome.tabs.create({ url }); } catch (e) { window.open(url, '_blank'); }
   }
 
-  function closePopup() {
-    try { if (typeof window.close === 'function') window.close(); } catch (e) { /* 忽略 */ }
-  }
-
-  // #42：定位在本页打开——当前标签有 id 时 update 其 URL 并关弹窗；
-  // update 失败 / 无 id（chrome:// 等受限页）退回新开标签，不报错给用户。
-  // 不加 tabs 权限：query 取 id、update 设 URL 都不需要它。
+  // #45：定位 = 在「普通窗口」的当前标签打开；不导航插件自己的小窗，也不关窗。
+  // 标签取用顺序（均不需要 tabs 权限）：
+  //   a) getLastFocused({windowTypes:['normal']}) → tabs.query({active, windowId})
+  //   b) tabs.query({active, lastFocusedWindow:true})
+  //   c) tabs.query({active}) 里排除插件页自身的标签
+  // update 失败 / 无标签（chrome:// 等受限页）→ 新开标签，同样不关窗，不报错。
   function openFavorite(item) {
     const url = buildDeepLink(item.steleId) || buildSearchLink(item.name);
     if (!url) return;
     const tabs = (typeof chrome !== 'undefined' && chrome.tabs) ? chrome.tabs : null;
+    const wins = (typeof chrome !== 'undefined' && chrome.windows) ? chrome.windows : null;
     if (!tabs || typeof tabs.query !== 'function') { openExternal(url); return; }
 
     let done = false;
     const fallback = () => { if (done) return; done = true; openExternal(url); };
-    const finish = () => { if (done) return; done = true; closePopup(); };
 
-    const onUpdate = (err) => {
-      if (done) return;
-      if (err) fallback(); else finish();
-    };
-    let queried = false;
-    const onTab = (tab) => {
-      if (done || queried) return;
-      queried = true;
-      if (!tab || tab.id == null || typeof tabs.update !== 'function') { fallback(); return; }
-      let updateCalled = false;
+    const selfId = (cb) => {
       try {
-        const ret = tabs.update(tab.id, { url }, () => {
-          if (updateCalled) return;
-          updateCalled = true;
-          const last = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) || null;
-          onUpdate(last);
-        });
-        if (ret && typeof ret.then === 'function') {
-          ret.then(() => { if (!updateCalled) { updateCalled = true; onUpdate(null); } },
-                   () => { if (!updateCalled) { updateCalled = true; onUpdate({ message: 'update failed' }); } });
+        if (typeof tabs.getCurrent === 'function') {
+          tabs.getCurrent(tab => cb(tab && tab.id != null ? tab.id : null));
+          return;
         }
-      } catch (e) { fallback(); }
+      } catch (e) { /* 忽略 */ }
+      cb(null);
     };
 
-    try {
-      const ret = tabs.query({ active: true, currentWindow: true }, list => onTab(list && list[0]));
-      if (ret && typeof ret.then === 'function') ret.then(list => onTab(list && list[0]), fallback);
-    } catch (e) { fallback(); }
+    const tryUpdate = (tab) => {
+      if (done) return;
+      if (!tab || tab.id == null || typeof tabs.update !== 'function') { fallback(); return; }
+      selfId(id => {
+        if (done) return;
+        if (id != null && String(tab.id) === String(id)) { fallback(); return; }
+        let settled = false;
+        const fail = () => { if (settled) return; settled = true; fallback(); };
+        try {
+          const ret = tabs.update(tab.id, { url }, () => {
+            if (settled) return;
+            settled = true;
+            const err = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) || null;
+            if (err) fallback();   // 失败：新开标签；成功则什么都不做（不关窗）
+          });
+          if (ret && typeof ret.then === 'function') {
+            ret.then(() => { if (!settled) settled = true; }, fail);
+          }
+        } catch (e) { fail(); }
+      });
+    };
+
+    const pick = (list, excludeId) => {
+      const arr = Array.isArray(list) ? list : [];
+      for (let i = 0; i < arr.length; i++) {
+        const t = arr[i];
+        if (!t || t.id == null) continue;
+        if (excludeId != null && String(t.id) === String(excludeId)) continue;
+        return t;
+      }
+      return null;
+    };
+
+    const query = (opts, next) => {
+      let called = false;
+      const cb = list => {
+        if (called || done) return;
+        called = true;
+        const t = pick(list, null);
+        if (t) tryUpdate(t); else next();
+      };
+      try {
+        const ret = tabs.query(opts, cb);
+        if (ret && typeof ret.then === 'function') ret.then(cb, () => { if (!called && !done) { called = true; next(); } });
+      } catch (e) { if (!called && !done) { called = true; next(); } }
+    };
+
+    const stageC = () => {
+      selfId(id => {
+        if (done) return;
+        let called = false;
+        const cb = list => {
+          if (called || done) return;
+          called = true;
+          const t = pick(list, id);
+          if (t) tryUpdate(t); else fallback();
+        };
+        try {
+          const ret = tabs.query({ active: true }, cb);
+          if (ret && typeof ret.then === 'function') ret.then(cb, () => { if (!called && !done) { called = true; fallback(); } });
+        } catch (e) { if (!called && !done) { called = true; fallback(); } }
+      });
+    };
+
+    const stageB = () => query({ active: true, lastFocusedWindow: true }, stageC);
+
+    const stageA = () => {
+      if (!wins || typeof wins.getLastFocused !== 'function') { stageB(); return; }
+      let called = false;
+      const onWin = win => {
+        if (called || done) return;
+        called = true;
+        const err = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) || null;
+        if (err || !win || win.id == null) { stageB(); return; }
+        query({ active: true, windowId: win.id }, stageB);
+      };
+      try {
+        const ret = wins.getLastFocused({ windowTypes: ['normal'] }, onWin);
+        if (ret && typeof ret.then === 'function') ret.then(onWin, () => { if (!called && !done) { called = true; stageB(); } });
+      } catch (e) { if (!called && !done) { called = true; stageB(); } }
+    };
+
+    stageA();
   }
 
   function amapUrlOf(item) {
