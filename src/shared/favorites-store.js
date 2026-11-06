@@ -390,6 +390,19 @@
     return { ok: true, moved };
   }
 
+  /** #53：整库替换（WebDAV 合并结果写回）；同样排队，schema/大小/结构校验不过则拒绝 */
+  async function replaceNow(lib) {
+    if (!lib || typeof lib !== 'object' || !Array.isArray(lib.groups) || !Array.isArray(lib.items)) {
+      return { ok: false, reason: 'schema' };
+    }
+    const san = sanitizeLibrary(lib);
+    if (!san) return { ok: false, reason: 'schema' };
+    migrateLibrary(san);
+    const w = await writeLibrary(san);
+    if (!w.ok) return w;
+    return { ok: true, library: san };
+  }
+
   // #36 P2-2(a)：对外变更接口一律排队。弹出页与内容脚本各自持一份 store，
   // 同一份里的并发写不再互相覆盖；回调/返回值与排队前一致（成功/失败 reason 原样返回）。
   function add(item, opts) { return enqueueWrite(() => addNow(item, opts)); }
@@ -398,6 +411,7 @@
   function createGroup(name) { return enqueueWrite(() => createGroupNow(name)); }
   function renameGroup(id, name) { return enqueueWrite(() => renameGroupNow(id, name)); }
   function deleteGroup(id) { return enqueueWrite(() => deleteGroupNow(id)); }
+  function replace(lib) { return enqueueWrite(() => replaceNow(lib)); }
 
   async function search(query, scope, groupId) {
     const q = String(query == null ? '' : query).trim().toLowerCase();
@@ -430,7 +444,7 @@
   window.HMP.favoritesStore = {
     KEY, SCHEMA, SCHEMA_LEGACY, LIMITS, TOMBSTONE_LIMIT, TOMBSTONE_TTL_MS,
     DEFAULT_GROUP_ID, DEFAULT_GROUPS, DEFAULT_WANT_ID,
-    read, add, remove, move, isSaved,
+    read, replace, add, remove, move, isSaved,
     listGroups, createGroup, renameGroup, deleteGroup,
     search, exportJSON,
   };

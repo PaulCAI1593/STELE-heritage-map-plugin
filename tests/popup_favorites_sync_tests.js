@@ -11,6 +11,7 @@ const { check, finish } = makeChecker('popup-fav-sync');
 const SRC = path.join(__dirname, '..', 'src');
 const popupJs = fs.readFileSync(path.join(SRC, 'popup', 'popup.js'), 'utf8');
 const storeJs = fs.readFileSync(path.join(SRC, 'shared', 'favorites-store.js'), 'utf8');
+const syncJs = fs.readFileSync(path.join(SRC, 'shared', 'favorites-sync.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
 const popupHtml = fs.readFileSync(path.join(SRC, 'popup', 'popup.html'), 'utf8');
 const popupCss = fs.readFileSync(path.join(SRC, 'popup', 'popup.css'), 'utf8');
@@ -60,7 +61,8 @@ const IDS = [
   'favHint', 'favHintText', 'favEmpty', 'favEmptyTitle', 'favEmptyBody', 'favEmptyGo', 'favEmptyClear',
   'favExport', 'favNewForm', 'favRenameForm', 'favNewName', 'favRenameName',
   'favNewOk', 'favNewCancel', 'favRenameOk', 'favRenameCancel',
-  'favNewGroup', 'favRenameGroup', 'favDeleteGroup', 'popoutBtn'
+  'favNewGroup', 'favRenameGroup', 'favDeleteGroup', 'popoutBtn',
+  'favSync', 'syncUrl', 'syncUser', 'syncPass', 'syncPath', 'syncSave', 'syncTest', 'syncStatus', 'syncHttpWarn'
 ];
 const FKEY = 'hmp:favorites:v1';
 
@@ -142,6 +144,10 @@ function build(opts) {
       },
     },
     runtime: { getManifest: () => ({ version: '0.5.2' }), getURL: p => 'chrome-extension://test/' + p },
+    permissions: {
+      _req: [],
+      request(args, cb) { this._req.push(args); if (cb) { cb(o.permissionsGranted !== false); return undefined; } return Promise.resolve(o.permissionsGranted !== false); },
+    },
     tabs: {
       query(q, cb) {
         tabCalls.query.push(q);
@@ -202,6 +208,7 @@ function build(opts) {
   };
 
   (0, eval)(storeJs);
+  (0, eval)(syncJs);
   (0, eval)(popupJs);
   if (domListeners.DOMContentLoaded) domListeners.DOMContentLoaded();
   return { els, store, session, onChanged, popup: global.HMP.popup, tabCalls, winCalls, closeCount: () => closeCount };
@@ -493,6 +500,58 @@ function lib(items) {
     walk(SRC);
     check('#48 src/ 无「去配置 Key」字面量', hits.length === 0, 'files=' + JSON.stringify(hits));
     check('#48 空态按钮初始 hidden 且中性文案', /id="favEmptyGo"[^>]*hidden[^>]*>查看全部收藏</.test(popupHtml));
+  }
+
+  console.log('\n=== #53 WebDAV 同步 UI ===');
+  {
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    // 未配置：引导到开放时间页，不发起请求
+    const off = await H.popup.sync.run();
+    check('#53 未配置：提示去开放时间配置、不请求网络',
+      off.ok === false && off.reason === 'unconfigured' &&
+      H.els.syncStatus.textContent.indexOf('WebDAV 同步') >= 0 &&
+      H.popup.favorites.state().activeTab === 'set');
+    H.els.syncUrl.value = 'http://dav.example.com/dav';
+    H.els.syncUser.value = 'u';
+    H.els.syncPass.value = 'p';
+    H.els.syncUrl._h.input && H.els.syncUrl._h.input();
+    check('#53 http 地址出现明文警告', H.els.syncHttpWarn.hidden === false);
+    const granted = await H.popup.sync.save();
+    check('#53 保存配置：申请 origin 权限并落库（密码不进 UI 文案）',
+      granted === true && chrome.permissions._req.length === 1 &&
+      chrome.permissions._req[0].origins[0] === 'http://dav.example.com/*' &&
+      H.store['hmp:webdav'] && H.store['hmp:webdav'].user === 'u' &&
+      H.store['hmp:webdav'].pass === 'p' && H.els.syncStatus.textContent === '已保存');
+
+
+    // 配置后同步：busy 设置/恢复，404 首次 → PUT 主文件 → 写本机 → 完成文案
+    const puts = [];
+    global.fetch = async (u, o) => {
+      const method = (o && o.method) || 'GET';
+      if (method === 'PUT') puts.push(u);
+      return method === 'GET'
+        ? { ok: false, status: 404, text: async () => '' }
+        : { ok: true, status: 201, text: async () => '' };
+    };
+    H.els.syncUrl.value = 'https://dav.example.com/dav';
+    const runP = H.popup.sync.run();
+    check('#53 同步中：按钮 disabled 且 aria-busy=true、文案「同步中…」',
+      H.els.favSync.disabled === true && H.els.favSync.getAttribute('aria-busy') === 'true' &&
+      H.els.favSync.textContent === '同步中…');
+    const out = await runP;
+    check('#53 同步成功：busy 恢复、完成文案、PUT 主文件、本机已写',
+      out.ok === true && H.els.favSync.disabled === false &&
+      H.els.favSync.getAttribute('aria-busy') === null &&
+      H.els.favSync.textContent === 'WebDAV 同步' &&
+      H.els.syncStatus.textContent.indexOf('已同步：新增') === 0 &&
+      puts.length === 1 && H.store['hmp:favorites:v1'].schema === 2);
+
+    // 401 文案
+    global.fetch = async () => ({ ok: false, status: 401, text: async () => '' });
+    const r401 = await H.popup.sync.run();
+    check('#53 401：状态小字「账号或密码不对。」', H.els.syncStatus.textContent === '账号或密码不对。');
+    delete global.fetch;
   }
 
   finish();

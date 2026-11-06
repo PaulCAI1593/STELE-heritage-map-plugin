@@ -96,6 +96,7 @@
     </div>
 
     <div class="fav-tools">
+      <button class="btn sec" type="button" id="favSync">WebDAV 同步</button>
       <button class="btn sec" type="button" id="favExport">导出收藏</button>
     </div>
   </div>
@@ -168,6 +169,35 @@
     </div>
   </details>
 
+  <details class="adv" id="advSync">
+    <summary>WebDAV 同步</summary>
+    <div class="body">
+      <div class="fld">
+        <div class="lbl"><label for="syncUrl">服务器地址</label><span class="ks" id="syncStatus" role="status" aria-live="polite"></span></div>
+        <div class="inp-row"><input type="url" id="syncUrl" placeholder="例：https://dav.example.com/dav" autocomplete="off" spellcheck="false"></div>
+        <p class="hint warn" id="syncHttpWarn" hidden>当前是 http 地址，账号与收藏会明文传输，建议改用 https。</p>
+      </div>
+      <div class="fld">
+        <div class="lbl"><label for="syncUser">用户名</label></div>
+        <div class="inp-row"><input type="text" id="syncUser" autocomplete="off" spellcheck="false"></div>
+      </div>
+      <div class="fld">
+        <div class="lbl"><label for="syncPass">密码</label></div>
+        <div class="inp-row"><input type="password" id="syncPass" autocomplete="off" spellcheck="false"></div>
+        <p class="hint">凭据只存本机（chrome.storage.local），不进导出文件、不写日志。</p>
+      </div>
+      <div class="fld">
+        <div class="lbl"><label for="syncPath">远端路径</label></div>
+        <div class="inp-row"><input type="text" id="syncPath" placeholder="heritage-map/favorites.json" autocomplete="off" spellcheck="false"></div>
+        <p class="hint">相对服务器地址；默认 heritage-map/favorites.json。</p>
+      </div>
+      <div class="hrow">
+        <button class="btn primary" type="button" id="syncSave">保存配置</button>
+        <button class="btn sec" type="button" id="syncTest">测试连接</button>
+      </div>
+    </div>
+  </details>
+
   <div class="acts">
     <button class="btn primary" type="button" id="save">保存</button>
     <button class="btn sec" type="button" id="clearCache">清除缓存</button>
@@ -201,6 +231,7 @@
 <script src="../content/apis/baidu.js"></script>
 <script src="../content/decision-log.js"></script>
 <script src="../shared/favorites-store.js"></script>
+<script src="../shared/favorites-sync.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

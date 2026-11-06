@@ -210,6 +210,7 @@
       renderState(computeState());
     });
     refreshCacheInfo();
+    loadSyncConfig();
     initVersion();
     restoreUpdateCache();
   }
@@ -1372,6 +1373,145 @@
     await renderFavorites();
   }
 
+  // ---------------- #53 WebDAV 同步 ----------------
+  let syncCfg = null;
+  let syncBusy = false;
+  let syncNoticeTimer = null;
+
+  function syncModule() { return window.HMP && window.HMP.favoritesSync; }
+
+  function parseSyncOrigin(raw) {
+    try {
+      const u = new URL(String(raw || '').trim());
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+      return u.origin;
+    } catch (e) { return ''; }
+  }
+
+  function readSyncForm() {
+    const mod = syncModule();
+    const path = ($('syncPath') ? String($('syncPath').value || '').trim() : '') ||
+      (mod ? mod.DEFAULT_PATH : 'heritage-map/favorites.json');
+    return {
+      url: ($('syncUrl') ? String($('syncUrl').value || '').trim() : ''),
+      user: ($('syncUser') ? String($('syncUser').value || '') : ''),
+      pass: ($('syncPass') ? String($('syncPass').value || '') : ''),
+      path,
+    };
+  }
+
+  function updateSyncHttpWarn() {
+    const warn = $('syncHttpWarn');
+    if (!warn) return;
+    const url = $('syncUrl') ? String($('syncUrl').value || '').trim() : '';
+    warn.hidden = !/^http:\/\//i.test(url);
+  }
+
+  function setSyncStatus(text, kind) {
+    const el = $('syncStatus');
+    if (!el) return;
+    el.textContent = text || '';
+    el.dataset.kind = kind || '';
+  }
+
+  function renderSyncConfig(cfg) {
+    syncCfg = cfg && cfg.url ? cfg : null;
+    if ($('syncUrl')) $('syncUrl').value = (syncCfg && syncCfg.url) || '';
+    if ($('syncUser')) $('syncUser').value = (syncCfg && syncCfg.user) || '';
+    if ($('syncPass')) $('syncPass').value = (syncCfg && syncCfg.pass) || '';
+    if ($('syncPath')) $('syncPath').value = (syncCfg && syncCfg.path) ||
+      (syncModule() ? syncModule().DEFAULT_PATH : 'heritage-map/favorites.json');
+    updateSyncHttpWarn();
+    setSyncStatus(syncCfg ? '' : '未配置', '');
+  }
+
+  function loadSyncConfig() {
+    storageGet([syncModule() ? syncModule().SYNC_KEY : 'hmp:webdav'], items => {
+      renderSyncConfig((items && items['hmp:webdav']) || null);
+    });
+  }
+
+  function requestOriginPermission(origin) {
+    return new Promise(resolve => {
+      if (!chrome.permissions || !chrome.permissions.request) { resolve(false); return; }
+      try {
+        chrome.permissions.request({ origins: [origin + '/*'] }, granted => resolve(!!granted));
+      } catch (e) { resolve(false); }
+    });
+  }
+
+  /** 保存配置：先申请 origin 权限，拒绝则不落库。 */
+  function saveSyncConfig() {
+    const cfg = readSyncForm();
+    const origin = parseSyncOrigin(cfg.url);
+    if (!origin) { setSyncStatus('服务器地址无效（需 http/https）。', 'err'); return Promise.resolve(false); }
+    return requestOriginPermission(origin).then(granted => {
+      if (!granted) { setSyncStatus('未授予站点权限，配置未保存。', 'err'); return false; }
+      return new Promise(resolve => {
+        storageSet({ [syncModule() ? syncModule().SYNC_KEY : 'hmp:webdav']: cfg }, () => {
+          syncCfg = cfg;
+          updateSyncHttpWarn();
+          setSyncStatus('已保存', 'ok');
+          resolve(true);
+        });
+      });
+    });
+  }
+
+  async function testSyncConnection() {
+    const mod = syncModule();
+    if (!mod) { setSyncStatus('同步模块未加载。', 'err'); return { ok: false, reason: 'unconfigured' }; }
+    const cfg = readSyncForm();
+    const origin = parseSyncOrigin(cfg.url);
+    if (!origin) { setSyncStatus('请先填写有效的服务器地址。', 'err'); return { ok: false, reason: 'unconfigured' }; }
+    setSyncStatus('连接中…', 'busy');
+    const r = await mod.getRemote(cfg, mod.buildUrl(cfg.url, cfg.path),
+      typeof fetch === 'function' ? fetch : null);
+    if (r.ok) setSyncStatus(r.missing ? '连接成功（远端还没有文件）' : '连接成功', 'ok');
+    else setSyncStatus(mod.syncErrorText(r.reason, r.status), 'err');
+    return r;
+  }
+
+  async function runSync() {
+    const mod = syncModule();
+    const store = favStore();
+    if (!mod || !store) { setSyncStatus('同步模块未加载。', 'err'); return { ok: false, reason: 'unconfigured' }; }
+    if (syncBusy) return { ok: false, reason: 'busy' };
+    const cfg = readSyncForm();
+    if (!parseSyncOrigin(cfg.url)) {
+      setSyncStatus('请先在「开放时间 → WebDAV 同步」配置服务器地址与账号。', 'warn');
+      activateTab('set');
+      return { ok: false, reason: 'unconfigured' };
+    }
+    const btn = $('favSync');
+    syncBusy = true;
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = '同步中…'; }
+    setSyncStatus('同步中…', 'busy');
+    let out;
+    try {
+      out = await mod.syncLibrary(cfg, store, typeof fetch === 'function' ? fetch : null);
+    } catch (e) {
+      out = { ok: false, reason: 'unknown' };
+    }
+    if (out.ok) {
+      const st = out.stats || { added: 0, updated: 0, removed: 0 };
+      const text = '已同步：新增 ' + st.added + '、更新 ' + st.updated + '、删除 ' + st.removed;
+      setSyncStatus(text, 'ok');
+      favHint = { kind: 'info', text };
+      renderFavHint();
+      if (syncNoticeTimer) clearTimeout(syncNoticeTimer);
+      syncNoticeTimer = setTimeout(() => {
+        if (favHint && /^已同步/.test(favHint.text || '')) { favHint = null; renderFavHint(); }
+      }, 5000);
+      await renderFavorites();
+    } else {
+      setSyncStatus(mod.syncErrorText(out.reason, out.status), 'err');
+    }
+    syncBusy = false;
+    if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'WebDAV 同步'; }
+    return out;
+  }
+
   function exportFavorites() {
     const store = favStore();
     if (!store) return;
@@ -1615,6 +1755,10 @@
 
     bindFavorites();
     bindFavoritesStorageSync();
+    if ($('favSync')) $('favSync').addEventListener('click', () => runSync());
+    if ($('syncSave')) $('syncSave').addEventListener('click', () => saveSyncConfig());
+    if ($('syncTest')) $('syncTest').addEventListener('click', () => testSyncConnection());
+    if ($('syncUrl')) $('syncUrl').addEventListener('input', updateSyncHttpWarn);
     if ($('popoutBtn')) $('popoutBtn').addEventListener('click', popPanelOut);
 
     if (!savedSnapshot) resetRes();
@@ -1646,7 +1790,13 @@
       state: () => ({ activeTab, group: favActiveGroup, scope: favScope, query: favQuery }),
       __undo: () => favUndo
     },
-    refreshCacheInfo
+    refreshCacheInfo,
+    sync: {
+      KEY: 'hmp:webdav', read: readSyncForm, save: saveSyncConfig, test: testSyncConnection,
+      run: runSync, errorText: (r, st) => (syncModule() ? syncModule().syncErrorText(r, st) : ''),
+      status: () => { const el = $('syncStatus'); return el ? el.textContent : ''; },
+      busy: () => syncBusy
+    }
   };
 
   // #43：工具栏图标打开的是独立小窗（service worker 加 ?window=1）。

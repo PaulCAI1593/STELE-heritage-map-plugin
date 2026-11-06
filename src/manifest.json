@@ -12,6 +12,10 @@
   "permissions": [
     "storage"
   ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "host_permissions": [
     "https://restapi.amap.com/*",
     "https://api.map.baidu.com/*",

@@ -75,6 +75,7 @@ html[data-hmp-window="1"] .hmp-popout{display:none}
 .inp-row input::placeholder{color:var(--hmp-placeholder)}
 .inp-row input:focus-visible{outline:2px solid var(--hmp-link);outline-offset:-1px}
 .hint{margin:3px 0 0;font-size:12px;line-height:1.5;color:var(--hmp-muted)}
+.hint.warn{color:var(--hmp-warn-ink)}
 .hrow{display:flex;gap:8px;align-items:center;margin-top:2px}
 .hrow .hint{margin:0;flex:1 1 auto;min-width:0}
 .lnk{flex:0 0 auto;display:inline-flex;align-items:center;min-height:32px;font-size:12.5px;
