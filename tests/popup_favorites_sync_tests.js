@@ -506,11 +506,12 @@ function lib(items) {
   {
     const H = build({ store: { hmpTheme: 'paper' } });
     await sleep(30);
-    // 未配置：引导到开放时间页，不发起请求
+    // 未配置：引导到开放时间页，不发起请求（#57 后：跨页指引在收藏页提示条，设置页状态只给本区指引）
     const off = await H.popup.sync.run();
-    check('#53 未配置：提示去开放时间配置、不请求网络',
+    check('#53 未配置：收藏页提示去开放时间配置、设置页不跨页自指、不请求网络',
       off.ok === false && off.reason === 'unconfigured' &&
-      H.els.syncStatus.textContent.indexOf('WebDAV 同步') >= 0 &&
+      H.els.favHintText.textContent.indexOf('开放时间 → WebDAV 同步') >= 0 &&
+      H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
       H.popup.favorites.state().activeTab === 'set');
     H.els.syncUrl.value = 'http://dav.example.com/dav';
     H.els.syncUser.value = 'u';
@@ -552,6 +553,40 @@ function lib(items) {
     const r401 = await H.popup.sync.run();
     check('#53 401：状态小字「账号或密码不对。」', H.els.syncStatus.textContent === '账号或密码不对。');
     delete global.fetch;
+  }
+
+  console.log('\n=== #57 同步提示文案（设置页不再自指） ===');
+  {
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    // 设置页初始（未配置）：本区操作指引，不含「开放时间」跨页指引
+    check('#57 设置页未配置时：状态行是本区指引、不自我指向',
+      H.els.syncStatus.textContent.indexOf('保存配置') >= 0 &&
+      H.els.syncStatus.textContent.indexOf('测试连接') >= 0 &&
+      H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
+      H.els.syncStatus.dataset.kind === 'info',
+      'text=' + H.els.syncStatus.textContent);
+    // 收藏页点同步且未配置：跨页指引仍在收藏页提示条，设置页同步显示本区指引
+    H.popup.favorites.activateTab('fav', false);
+    const off = await H.popup.sync.run();
+    check('#57 收藏页未配置点同步：跨页指引只出现在收藏页提示条（info 样式）',
+      off.ok === false && off.reason === 'unconfigured' &&
+      H.els.favHint.hidden === false &&
+      H.els.favHint.className === 'band b-info' &&
+      H.els.favHintText.textContent.indexOf('开放时间 → WebDAV 同步') >= 0,
+      'cls=' + H.els.favHint.className + ' text=' + H.els.favHintText.textContent);
+    check('#57 同一路径下设置页状态行不含跨页指引',
+      H.els.syncStatus.textContent.indexOf('开放时间') < 0 &&
+      H.els.syncStatus.textContent.indexOf('保存配置') >= 0 &&
+      H.popup.favorites.state().activeTab === 'set');
+    // 静态：跨页文案只出现一处，且只挂在未配置分支
+    const crossCount = (popupJs.match(/开放时间 → WebDAV 同步/g) || []).length;
+    check('#57 源码里跨页文案只有 1 处（常量），默认状态用本区指引',
+      crossCount === 1 &&
+      /const SYNC_CROSS_GUIDE = '请先在「开放时间 → WebDAV 同步」配置服务器地址与账号。'/.test(popupJs) &&
+      /setSyncStatus\(syncCfg \? '' : SYNC_LOCAL_GUIDE, 'info'\)/.test(popupJs),
+      'crossCount=' + crossCount);
+    check('#57 默认状态不再写「未配置」字面量', !/setSyncStatus\(syncCfg \? '' : '未配置'/.test(popupJs));
   }
 
   console.log('\n=== #56 三处 UI 修复：label 竖排 / 成功样式 / 地址重复 ===');

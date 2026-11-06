@@ -1382,6 +1382,11 @@
   let syncBusy = false;
   let syncNoticeTimer = null;
 
+  // #57：设置页本区指引（用户已在 WebDAV 配置区，不再跨页指向自己）
+  const SYNC_LOCAL_GUIDE = '填写地址、用户名与密码后点「保存配置」，再点「测试连接」。';
+  // #57：跨页指引只用于「收藏页点同步且未配置」这一条路径
+  const SYNC_CROSS_GUIDE = '请先在「开放时间 → WebDAV 同步」配置服务器地址与账号。';
+
   function syncModule() { return window.HMP && window.HMP.favoritesSync; }
 
   function parseSyncOrigin(raw) {
@@ -1426,7 +1431,7 @@
     if ($('syncPath')) $('syncPath').value = (syncCfg && syncCfg.path) ||
       (syncModule() ? syncModule().DEFAULT_PATH : 'heritage-map/favorites.json');
     updateSyncHttpWarn();
-    setSyncStatus(syncCfg ? '' : '未配置', '');
+    setSyncStatus(syncCfg ? '' : SYNC_LOCAL_GUIDE, 'info');
   }
 
   function loadSyncConfig() {
@@ -1483,7 +1488,10 @@
     if (syncBusy) return { ok: false, reason: 'busy' };
     const cfg = readSyncForm();
     if (!parseSyncOrigin(cfg.url)) {
-      setSyncStatus('请先在「开放时间 → WebDAV 同步」配置服务器地址与账号。', 'warn');
+      // 收藏页点同步：跨页指引留在收藏页提示条，设置页只显示本区指引
+      favHint = { kind: 'info', text: SYNC_CROSS_GUIDE };
+      renderFavHint();
+      setSyncStatus(SYNC_LOCAL_GUIDE, 'info');
       activateTab('set');
       return { ok: false, reason: 'unconfigured' };
     }
