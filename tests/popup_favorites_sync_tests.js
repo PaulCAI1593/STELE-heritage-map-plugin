@@ -554,5 +554,79 @@ function lib(items) {
     delete global.fetch;
   }
 
+  console.log('\n=== #56 三处 UI 修复：label 竖排 / 成功样式 / 地址重复 ===');
+  {
+    // 1) 状态/引导文案移出 label 行，独立一行；CSS 允许换行（不许 nowrap 挤压 label）
+    check('#56 状态文案独立一行，不再与「服务器地址」同行',
+      /<div class="lbl"><label for="syncUrl">服务器地址<\/label><\/div>/.test(popupHtml) &&
+      /<p class="hint sync-status" id="syncStatus"[^>]*role="status"/.test(popupHtml) &&
+      !/class="ks" id="syncStatus"/.test(popupHtml) &&
+      /\.sync-status\{[^}]*white-space:normal/.test(popupCss) &&
+      /\.sync-status\[data-kind="ok"\]/.test(popupCss) &&
+      /\.sync-status\[data-kind="err"\]/.test(popupCss));
+
+    // 2) 状态带按语义换图标与 class：成功=对勾 b-ok，警告仍=三角 b-warn
+    check('#56 状态带图标随语义切换（成功对勾 / 信息圈 / 警告三角）',
+      /class="ic ic-warn"/.test(popupHtml) && /class="ic ic-ok"/.test(popupHtml) &&
+      /class="ic ic-info"/.test(popupHtml) &&
+      /\.band\.b-ok \.ic-warn,\.band\.b-info \.ic-warn\{display:none\}/.test(popupCss) &&
+      /\.band\.b-ok \.ic-ok\{display:block\}/.test(popupCss) &&
+      /\.band\.b-info \.ic-info\{display:block\}/.test(popupCss) &&
+      /FAV_HINT_CLASS = \{ ok: 'b-ok'/.test(popupJs) &&
+      /favHint = \{ kind: 'ok', text \}/.test(popupJs));
+
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    H.popup.favorites.showHint('ok', 'unknown');
+    check('#56 成功提示用 b-ok（不再是 b-warn）',
+      H.els.favHint.className === 'band b-ok',
+      'className=' + H.els.favHint.className);
+    H.popup.favorites.showHint('warn', 'unknown');
+    check('#56 失败提示仍用 b-warn', H.els.favHint.className === 'band b-warn',
+      'className=' + H.els.favHint.className);
+  }
+
+  {
+    // 3) 收藏条目地址只出现一次：未匹配第三行写「未匹配地图地点」
+    const ITEMS = [
+      { steleId: 's1', name: '龙华寺', address: '上海市徐汇区龙华路2853号', groupId: 'g-been', savedAt: 1772800001000 },
+      { steleId: 's2', name: '故宫博物院', address: '北京市东城区景山前街4号', groupId: 'g-been', savedAt: 1772800002000,
+        match: { matchedName: '故宫博物院', matchDist: 12 } },
+    ];
+    const H = build({ store: { hmpTheme: 'paper', 'hmp:favorites:v1': lib(ITEMS) } });
+    await sleep(30);
+    await H.popup.favorites.render();
+    const allByClass = (node, cls, out) => {
+      out = out || [];
+      if (node && String(node.className || '').split(/\s+/).indexOf(cls) >= 0) out.push(node);
+      (node.children || []).forEach(c => allByClass(c, cls, out));
+      return out;
+    };
+    const allText = node => {
+      let t = String(node.textContent || '');
+      (node.children || []).forEach(c => { t += ' ' + allText(c); });
+      return t;
+    };
+    const count = (s, sub) => s.split(sub).length - 1;
+    // 列表按 savedAt 倒序，别按数组下标取行：用名字认行。
+    const rows = H.els.favList.children;
+    const rowOf = name => rows.find(r => allText(r).indexOf(name) >= 0);
+    const row0 = rowOf('龙华寺'), row1 = rowOf('故宫博物院');
+    const t0 = allText(row0);
+    const t1 = allText(row1);
+    const snap0 = allByClass(row0, 'fsnap-t')[0];
+    const snap1 = allByClass(row1, 'fsnap-t')[0];
+    check('#56 未匹配条目：地址只出现一次，第三行「未匹配地图地点」',
+      count(t0, '上海市徐汇区龙华路2853号') === 1 &&
+      !!snap0 && snap0.textContent === '未匹配地图地点',
+      'addr=' + count(t0, '上海市徐汇区龙华路2853号') + ' snap=' + (snap0 && snap0.textContent));
+    check('#56 已匹配条目：地址只出现一次，第三行仍是「匹配到 X · 直线约 N 米」',
+      count(t1, '北京市东城区景山前街4号') === 1 &&
+      !!snap1 && snap1.textContent === '匹配到 故宫博物院 · 直线约 12 米',
+      'addr=' + count(t1, '北京市东城区景山前街4号') + ' snap=' + (snap1 && snap1.textContent));
+    check('#56 未匹配条目不回退成地址（源码不再用 item.address 兜底 fsnap）',
+      !/: \(item\.address \|\| ''\);/.test(popupJs));
+  }
+
   finish();
 })();

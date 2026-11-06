@@ -78,7 +78,10 @@
     </div>
 
     <div class="band b-warn" id="favHint" role="status" aria-live="polite" hidden>
-      <svg class="ic" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.4 14.6 13.4H1.4Z"></path><path d="M8 6.6v3M8 11.4h.01"></path></svg>
+      <!-- #56：图标随状态切换（成功=对勾、信息=信息圈、警告/错误=三角），成功态不再挂警告图标 -->
+      <svg class="ic ic-warn" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.4 14.6 13.4H1.4Z"></path><path d="M8 6.6v3M8 11.4h.01"></path></svg>
+      <svg class="ic ic-ok" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 8.4 6.2 12 13.4 4.4"></path></svg>
+      <svg class="ic ic-info" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.4"></circle><path d="M8 7.2v4M8 4.8h.01"></path></svg>
       <div class="band-t" id="favHintText"></div>
       <button class="btn sec band-act" type="button" id="favHintAct" hidden>移动</button>
     </div>
@@ -173,8 +176,10 @@
     <summary>WebDAV 同步</summary>
     <div class="body">
       <div class="fld">
-        <div class="lbl"><label for="syncUrl">服务器地址</label><span class="ks" id="syncStatus" role="status" aria-live="polite"></span></div>
+        <div class="lbl"><label for="syncUrl">服务器地址</label></div>
         <div class="inp-row"><input type="url" id="syncUrl" placeholder="例：https://dav.example.com/dav" autocomplete="off" spellcheck="false"></div>
+        <!-- #56：状态/引导独立一行（原先塞在 label 行，400 宽会把「服务器地址」挤成竖排） -->
+        <p class="hint sync-status" id="syncStatus" role="status" aria-live="polite"></p>
         <p class="hint warn" id="syncHttpWarn" hidden>当前是 http 地址，账号与收藏会明文传输，建议改用 https。</p>
       </div>
       <div class="fld">

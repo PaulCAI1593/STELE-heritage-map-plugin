@@ -58,6 +58,11 @@ html[data-hmp-window="1"] .hmp-popout{display:none}
 .b-err{background:var(--hmp-err-bg);border-color:var(--hmp-err-line);color:var(--hmp-err-ink)}
 .b-warn{background:var(--hmp-warn-bg);border-color:var(--hmp-warn-line);color:var(--hmp-warn-ink)}
 .b-info,.b-prog{background:var(--hmp-info-bg);border-color:var(--hmp-info-line);color:var(--hmp-info-ink)}
+/* #56：状态带图标按语义切换——成功=对勾、信息=信息圈、警告/错误=三角 */
+.band .ic-ok,.band .ic-info{display:none}
+.band.b-ok .ic-warn,.band.b-info .ic-warn{display:none}
+.band.b-ok .ic-ok{display:block}
+.band.b-info .ic-info{display:block}
 .spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
 @keyframes spin{to{transform:rotate(360deg)}}
 .meta{margin:0 12px 8px;font-size:12px;color:var(--hmp-muted)}
@@ -210,6 +215,13 @@ html[data-hmp-window="1"],html[data-hmp-window="1"] body{width:100%}
 /* Key 保存态小字（已保存·尾号 / 已修改·未保存 / 未配置） */
 .ks{margin-left:auto;font-size:12px;line-height:1.3;color:var(--hmp-muted);white-space:nowrap}
 .ks.is-dirty{color:var(--hmp-warn-ink);font-weight:600}
+
+/* #56：WebDAV 状态/引导独立一行（不与 label 同行，400 宽不再挤压 label）；颜色按状态区分，
+   成功走成功色、失败走错误色，不再与警告共用一套样式。12px 小字对比度按 ≥4.5 选 token。 */
+.sync-status{margin-top:3px;color:var(--hmp-muted);white-space:normal;overflow-wrap:anywhere}
+.sync-status[data-kind="ok"]{color:var(--hmp-ok-ink)}
+.sync-status[data-kind="err"]{color:var(--hmp-err-ink)}
+.sync-status[data-kind="busy"]{color:var(--hmp-info-ink)}
 
 /* 行内「测试」按钮（F 方案）：固定在标签行右侧 */
 .test-b{flex:0 0 auto;min-height:32px;padding:0 9px;font-size:12.5px;margin-left:2px}

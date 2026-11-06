@@ -1018,13 +1018,16 @@
 
   function clearFavHint() { favHint = null; renderFavHint(); }
 
+  // #56：状态带语义化——成功/信息/错误各自一套 class，成功不再显示警告底色与三角图标。
+  const FAV_HINT_CLASS = { ok: 'b-ok', info: 'b-info', err: 'b-err', warn: 'b-warn' };
+
   function renderFavHint() {
     const box = $('favHint');
     if (!box) return;
     const text = $('favHintText');
     box.hidden = !favHint;
     if (!favHint) return;
-    box.className = 'band ' + (favHint.kind === 'info' ? 'b-info' : 'b-warn');
+    box.className = 'band ' + (FAV_HINT_CLASS[favHint.kind] || 'b-warn');
     if (text) text.textContent = favHint.text;
   }
 
@@ -1087,9 +1090,10 @@
     }
 
     const m = item.match || {};
+    // #56：第三行只讲「匹配/未匹配」，不再回退成地址（地址已在上一行 metaText，避免同文两行）。
     const snapText = m.matchedName
       ? '匹配到 ' + m.matchedName + (Number.isFinite(m.matchDist) ? ' · 直线约 ' + Math.round(m.matchDist) + ' 米' : '')
-      : (item.address || '');
+      : '未匹配地图地点';
     const snap = el('span', 'fsnap');
     const st = el('span', 'fsnap-t', snapText);
     st.title = snapText;
@@ -1497,7 +1501,7 @@
       const st = out.stats || { added: 0, updated: 0, removed: 0 };
       const text = '已同步：新增 ' + st.added + '、更新 ' + st.updated + '、删除 ' + st.removed;
       setSyncStatus(text, 'ok');
-      favHint = { kind: 'info', text };
+      favHint = { kind: 'ok', text };
       renderFavHint();
       if (syncNoticeTimer) clearTimeout(syncNoticeTimer);
       syncNoticeTimer = setTimeout(() => {
