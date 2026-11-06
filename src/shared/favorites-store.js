@@ -1,13 +1,15 @@
 // favorites-store.js
 // 0.5.0 收藏夹 · 数据层（不依赖 DOM，popup 与 content 两条链路共用）
 //
-// 单键 `hmp:favorites:v1`，schema 1：
-//   { schema:1,
-//     groups:[{id,name,system,createdAt}],
+// 单键 `hmp:favorites:v1`（键名不变，schema 2）：
+//   { schema:2,
+//     groups:[{id,name,system,createdAt,updatedAt}],
 //     items:[{steleId,name,tier,address,admin,
 //             match:{matchedName,matchDist,matchType,provider},
 //             info:{opentime,cost,address},
-//             savedAt,groupId}] }
+//             savedAt,updatedAt,groupId}],
+//     tombstones:[{kind:'item'|'group', key, groupId?, deletedAt}] }
+//   schema 1 仍可读，读/写前一次性迁移到 2（item.updatedAt=savedAt、group.updatedAt=createdAt、补 tombstones）。
 //
 // 设计要点：
 //   · 每次写入都「整键回读-改-写」，卡片（content）与弹窗（popup）可能并发写；
@@ -20,7 +22,11 @@
   if (window.HMP.favoritesStore) return;   // 两处都加载时保持幂等
 
   const KEY = 'hmp:favorites:v1';
-  const SCHEMA = 1;
+  const SCHEMA = 2;
+  const SCHEMA_LEGACY = 1;
+  // #52：墓碑剪枝（WebDAV 同步要让删除生效，但不能无限膨胀）
+  const TOMBSTONE_LIMIT = 1000;
+  const TOMBSTONE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
   // legacy「未分组」：仅供迁移识别（可能出现在已装的 0.5.0 测试包里）
   const DEFAULT_GROUP_ID = 'g-default';
   const DEFAULT_WANT_ID = 'g-want';
@@ -68,8 +74,9 @@
   function defaultLibrary() {
     return {
       schema: SCHEMA,
-      groups: DEFAULT_GROUPS.map(g => ({ ...g })),
+      groups: DEFAULT_GROUPS.map(g => ({ ...g, updatedAt: g.createdAt })),
       items: [],
+      tombstones: [],
     };
   }
 
@@ -102,6 +109,9 @@
         address: info.address == null || info.address === '' ? null : clip(info.address, 300) || null,
       },
       savedAt: Number.isFinite(raw.savedAt) ? raw.savedAt : Date.now(),
+      // #52：同步用更新时间；旧数据迁移时补 savedAt
+      updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt
+        : (Number.isFinite(raw.savedAt) ? raw.savedAt : Date.now()),
       // 缺分组不在清洗层兜底：由 add() 判 need-group / 迁移把旧数据归到「想去」
       groupId: raw.groupId ? clip(raw.groupId, 40) : '',
     };
@@ -113,7 +123,7 @@
    */
   function sanitizeLibrary(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    if (raw.schema !== SCHEMA) return null;
+    if (raw.schema !== SCHEMA && raw.schema !== SCHEMA_LEGACY) return null;
     const groups = [];
     if (Array.isArray(raw.groups)) {
       for (const g of raw.groups) {
@@ -123,6 +133,8 @@
           name: clip(g.name, 40).trim() || '未命名分组',
           system: g.id === 'g-been' || g.id === 'g-want' || g.id === DEFAULT_GROUP_ID ? true : g.system === true,
           createdAt: Number.isFinite(g.createdAt) ? g.createdAt : 0,
+          updatedAt: Number.isFinite(g.updatedAt) ? g.updatedAt
+            : (Number.isFinite(g.createdAt) ? g.createdAt : 0),
         });
       }
     }
@@ -134,7 +146,19 @@
       }
     }
     items.sort((a, b) => b.savedAt - a.savedAt);
-    return { schema: SCHEMA, groups, items };
+    const tombstones = [];
+    if (Array.isArray(raw.tombstones)) {
+      for (const t of raw.tombstones) {
+        if (!t || typeof t !== 'object') continue;
+        if (t.kind !== 'item' && t.kind !== 'group') continue;
+        const key = clip(t.key, 64).trim();
+        if (!key) continue;
+        const tomb = { kind: t.kind, key, deletedAt: Number.isFinite(t.deletedAt) ? t.deletedAt : 0 };
+        if (t.kind === 'item' && t.groupId) tomb.groupId = clip(t.groupId, 40);
+        tombstones.push(tomb);
+      }
+    }
+    return { schema: raw.schema, groups, items, tombstones };
   }
 
   /**
@@ -146,11 +170,20 @@
    */
   function migrateLibrary(lib) {
     let changed = false;
+    // #52：schema 1 → 2（键名不变，只补字段；只在真有变化时由读路径落盘一次）
+    if (lib.schema !== SCHEMA) { lib.schema = SCHEMA; changed = true; }
+    if (!Array.isArray(lib.tombstones)) { lib.tombstones = []; changed = true; }
+    lib.items.forEach(it => {
+      if (!Number.isFinite(it.updatedAt)) { it.updatedAt = Number.isFinite(it.savedAt) ? it.savedAt : 0; changed = true; }
+    });
+    lib.groups.forEach(g => {
+      if (!Number.isFinite(g.updatedAt)) { g.updatedAt = Number.isFinite(g.createdAt) ? g.createdAt : 0; changed = true; }
+    });
     const byId = new Map(lib.groups.map(g => [g.id, g]));
     DEFAULT_GROUPS.forEach((dg, i) => {
       const g = byId.get(dg.id);
       if (!g) {
-        lib.groups.splice(i, 0, { ...dg });
+        lib.groups.splice(i, 0, { ...dg, updatedAt: dg.createdAt });
         changed = true;
       } else {
         if (g.system !== true) { g.system = true; changed = true; }
@@ -165,6 +198,21 @@
     const valid = new Set(lib.groups.map(g => g.id));
     lib.items.forEach(it => { if (!valid.has(it.groupId)) { it.groupId = DEFAULT_WANT_ID; changed = true; } });
     return changed;
+  }
+
+  /** #52：墓碑按 deletedAt 剪枝——保留 180 天内、最多 1000 条（写入前调用） */
+  function pruneTombstones(lib, now) {
+    const t = Number.isFinite(now) ? now : Date.now();
+    if (!Array.isArray(lib.tombstones)) { lib.tombstones = []; return; }
+    const before = lib.tombstones.length;
+    const cutoff = t - TOMBSTONE_TTL_MS;
+    lib.tombstones = lib.tombstones
+      .filter(x => Number.isFinite(x.deletedAt) && x.deletedAt >= cutoff)
+      .sort((a, b) => b.deletedAt - a.deletedAt)
+      .slice(0, TOMBSTONE_LIMIT)
+      .sort((a, b) => a.deletedAt - b.deletedAt);
+    if (lib.tombstones.length !== before) return true;
+    return false;
   }
 
   function byteLength(s) {
@@ -187,6 +235,7 @@
   }
 
   async function writeLibrary(lib) {
+    pruneTombstones(lib);   // #52：写入时剪枝，避免墓碑无限膨胀
     const body = JSON.stringify(lib);
     if (byteLength(body) > LIMITS.bytes) return { ok: false, reason: 'size' };
     const w = await setRaw(lib);
@@ -196,12 +245,12 @@
 
   async function read() {
     const raw = (await getRaw())[KEY];
-    if (raw == null) return { empty: true, schema: SCHEMA, groups: defaultLibrary().groups, items: [] };
+    if (raw == null) return { empty: true, schema: SCHEMA, groups: defaultLibrary().groups, items: [], tombstones: [] };
     const lib = sanitizeLibrary(raw);
     if (!lib) return { empty: true, corrupt: true };
     const migrated = migrateLibrary(lib);
     if (migrated) await writeLibrary(lib);   // 只在真有变化时落盘一次
-    return { schema: lib.schema, groups: lib.groups, items: lib.items, migrated };
+    return { schema: lib.schema, groups: lib.groups, items: lib.items, tombstones: lib.tombstones, migrated };
   }
 
   /** listGroups 也能拿到空库的默认组 */
@@ -229,6 +278,9 @@
     if (!groupId || !lib.groups.some(g => g.id === groupId)) return { ok: false, reason: 'need-group' };
     cleaned.groupId = groupId;
     if (!(opts && opts.keepSavedAt) || !Number.isFinite(cleaned.savedAt)) cleaned.savedAt = Date.now();
+    cleaned.updatedAt = Date.now();
+    // #52：同一 key 重新收藏 → 清掉旧的删除墓碑，否则同步会把新收藏又删掉
+    lib.tombstones = lib.tombstones.filter(t => !(t.kind === 'item' && t.key === cleaned.steleId));
     lib.items.push(cleaned);
     lib.items.sort((a, b) => b.savedAt - a.savedAt);
     const w = await writeLibrary(lib);
@@ -243,6 +295,10 @@
     const idx = lib.items.findIndex(x => x.steleId === steleId && (!groupId || x.groupId === groupId));
     if (idx < 0) return { ok: true, removed: false };
     const [item] = lib.items.splice(idx, 1);
+    // #52：删除留墓碑（WebDAV 合并据此删除另一端）
+    const tomb = { kind: 'item', key: item.steleId, deletedAt: Date.now() };
+    if (item.groupId) tomb.groupId = item.groupId;
+    lib.tombstones.push(tomb);
     const w = await writeLibrary(lib);
     if (!w.ok) return w;
     return { ok: true, removed: true, item };
@@ -258,6 +314,7 @@
     const item = lib.items.find(x => x.steleId === steleId);
     if (!item) return { ok: false, reason: 'not-found' };
     item.groupId = gid;
+    item.updatedAt = Date.now();   // #52：同步用
     const w = await writeLibrary(lib);
     if (!w.ok) return w;
     return { ok: true, item };
@@ -290,7 +347,7 @@
     if (lib.groups.length >= LIMITS.groups) return { ok: false, reason: 'limit-groups' };
     if (lib.groups.some(g => g.name === n)) return { ok: false, reason: 'duplicate-name' };
     const id = 'g-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const group = { id, name: n, system: false, createdAt: Date.now() };
+    const group = { id, name: n, system: false, createdAt: Date.now(), updatedAt: Date.now() };
     lib.groups.push(group);
     const w = await writeLibrary(lib);
     if (!w.ok) return w;
@@ -308,6 +365,7 @@
     if (g.system) return { ok: false, reason: 'system' };
     if (lib.groups.some(x => x.id !== id && x.name === n)) return { ok: false, reason: 'duplicate-name' };
     g.name = n;
+    g.updatedAt = Date.now();   // #52：同步用
     const w = await writeLibrary(lib);
     if (!w.ok) return w;
     return { ok: true, group: g };
@@ -321,9 +379,11 @@
     if (idx < 0) return { ok: false, reason: 'not-found' };
     if (lib.groups[idx].system) return { ok: false, reason: 'system' };
     lib.groups.splice(idx, 1);
+    lib.tombstones.push({ kind: 'group', key: id, deletedAt: Date.now() });   // #52
     let moved = 0;
+    const now = Date.now();
     for (const it of lib.items) {
-      if (it.groupId === id) { it.groupId = DEFAULT_WANT_ID; moved++; }
+      if (it.groupId === id) { it.groupId = DEFAULT_WANT_ID; it.updatedAt = now; moved++; }
     }
     const w = await writeLibrary(lib);
     if (!w.ok) return w;
@@ -357,11 +417,19 @@
 
   async function exportJSON() {
     const lib = await readLibrary();
-    return JSON.stringify({ schema: SCHEMA, groups: lib.groups, items: lib.items });
+    // #52 / 用户追加：v2 载荷保留分组信息；groupName 是导出时的只读快照，合并以 groupId 为准。
+    return JSON.stringify({
+      schema: SCHEMA,
+      exportedAt: Date.now(),
+      groups: lib.groups.map(g => ({ ...g })),
+      items: lib.items.map(it => ({ ...it, groupName: groupNameOf(lib, it.groupId) })),
+      tombstones: lib.tombstones.map(t => ({ ...t })),
+    });
   }
 
   window.HMP.favoritesStore = {
-    KEY, SCHEMA, LIMITS, DEFAULT_GROUP_ID, DEFAULT_GROUPS, DEFAULT_WANT_ID,
+    KEY, SCHEMA, SCHEMA_LEGACY, LIMITS, TOMBSTONE_LIMIT, TOMBSTONE_TTL_MS,
+    DEFAULT_GROUP_ID, DEFAULT_GROUPS, DEFAULT_WANT_ID,
     read, add, remove, move, isSaved,
     listGroups, createGroup, renameGroup, deleteGroup,
     search, exportJSON,

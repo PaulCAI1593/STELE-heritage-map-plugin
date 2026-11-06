@@ -264,7 +264,7 @@ const reset = () => { chrome.storage.local._store = {}; };
   const exp = await S.exportJSON();
   check('导出 JSON 脱敏（无 key/ak 字段、含 schema/groups/items）',
     !/amapKey|baiduAk|apiKey/i.test(exp) &&
-    JSON.parse(exp).schema === 1 && Array.isArray(JSON.parse(exp).items));
+    JSON.parse(exp).schema === 2 && Array.isArray(JSON.parse(exp).items));
   check('导出内容就是单键数据，不多写其它 storage 键',
     Object.keys(chrome.storage.local._store).join(',') === KEY);
 

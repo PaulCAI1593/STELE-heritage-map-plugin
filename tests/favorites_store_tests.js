@@ -22,7 +22,7 @@ const defaultGroups = () => ([
 
 (async () => {
   check('导出数据层（键名/schema/上限常量）',
-    !!S && S.KEY === 'hmp:favorites:v1' && S.SCHEMA === 1 &&
+    !!S && S.KEY === 'hmp:favorites:v1' && S.SCHEMA === 2 &&
     S.LIMITS.items === 500 && S.LIMITS.groups === 30 && S.LIMITS.bytes === 1024 * 1024);
   check('导出默认两组常量（已去 g-been / 想去 g-want）',
     Array.isArray(S.DEFAULT_GROUPS) && S.DEFAULT_GROUPS.length === 2 &&
@@ -141,7 +141,13 @@ const defaultGroups = () => ([
     mr.items.find(x => x.steleId === 'm1').groupId === WANT &&
     mr.items.find(x => x.steleId === 'm2').groupId === 'g-x' &&
     mr.items.find(x => x.steleId === 'm3').groupId === WANT);
-  check('迁移：不动 schema / savedAt', mr.schema === 1 && mr.items.find(x => x.steleId === 'm1').savedAt === 300);
+  check('迁移：schema 升到 2、updatedAt 补齐、savedAt 不动',
+    mr.schema === 2 && mr.items.find(x => x.steleId === 'm1').savedAt === 300 &&
+    mr.items.find(x => x.steleId === 'm1').updatedAt === 300 &&
+    mr.groups.find(g => g.id === 'g-x').updatedAt === 5 &&
+    mr.groups.every(g => Number.isFinite(g.updatedAt)) &&
+    mr.items.every(x => Number.isFinite(x.updatedAt)) &&
+    Array.isArray(mr.tombstones) && mr.tombstones.length === 0);
   check('迁移：read 即落盘（再读库已是新结构）',
     Array.isArray(lib().groups) && lib().groups[0].id === BEEN && !lib().groups.some(g => g.id === 'g-default'));
   const mr2 = await S.read();
@@ -185,15 +191,15 @@ const defaultGroups = () => ([
   }, { groupId: WANT });
   const exp = await S.exportJSON();
   const parsed = JSON.parse(exp);
-  check('exportJSON：schema/groups/items 齐全', parsed.schema === 1 && Array.isArray(parsed.groups) && parsed.items.length === 1);
+  check('exportJSON：schema/groups/items/tombstones/exportedAt 齐全', parsed.schema === 2 && Number.isFinite(parsed.exportedAt) && Array.isArray(parsed.groups) && parsed.items.length === 1 && Array.isArray(parsed.tombstones));
   check('exportJSON：不含 Key/AK', !exp.includes('amapKey') && !exp.includes('baiduAk') && !exp.includes('SHOULD_NOT_LEAK'));
 
-  // schema 保护：>1 拒绝写入且不覆盖
+  // schema 保护：既非 1 也非 2 拒绝写入且不覆盖
   reset();
-  chrome.storage.local.set({ [KEY]: { schema: 2, items: [{ steleId: 'old' }] } });
+  chrome.storage.local.set({ [KEY]: { schema: 3, items: [{ steleId: 'old' }] } });
   const bad = await S.add({ steleId: 'new' }, { groupId: WANT });
-  check('schema>1：拒写并返回 schema', bad.ok === false && bad.reason === 'schema');
-  check('schema>1：原数据未被覆盖', lib().schema === 2 && lib().items[0].steleId === 'old');
+  check('schema 非 1/2：拒写并返回 schema', bad.ok === false && bad.reason === 'schema');
+  check('schema 非 1/2：原数据未被覆盖', lib().schema === 3 && lib().items[0].steleId === 'old');
   const rb = await S.read();
   check('read：不合法 schema → empty+corrupt、不抛', rb.empty === true && rb.corrupt === true);
 
@@ -233,7 +239,7 @@ const defaultGroups = () => ([
 
   // 队列不因一次失败卡死：schema 拒写之后，清掉数据再写应恢复正常。
   reset();
-  chrome.storage.local.set({ [KEY]: { schema: 2, groups: [], items: [] } });
+  chrome.storage.local.set({ [KEY]: { schema: 3, groups: [], items: [] } });
   const rejected = await S.add({ steleId: 'q1', name: '拒写' }, { groupId: WANT });
   chrome.storage.local.remove(KEY);
   const recovered = await S.add({ steleId: 'q2', name: '恢复后写' }, { groupId: WANT });
@@ -244,6 +250,123 @@ const defaultGroups = () => ([
   await S.add({ steleId: 'k1', name: '撤销', savedAt: 111 }, { groupId: BEEN, keepSavedAt: true });
   check('keepSavedAt + groupId 写回原组与原收藏时间',
     lib().items[0].groupId === BEEN && lib().items[0].savedAt === 111);
+
+
+  // #52：schema 2 — updatedAt / 删除墓碑 / 导出 v2 / 分组信息
+  check('导出常量：SCHEMA=2、墓碑上限 1000、保留 180 天',
+    S.SCHEMA === 2 && S.TOMBSTONE_LIMIT === 1000 &&
+    S.TOMBSTONE_TTL_MS === 180 * 24 * 60 * 60 * 1000);
+
+  reset();
+  chrome.storage.local.set({ [KEY]: { schema: 1,
+    groups: [{ id: 'g-x', name: '出片', system: false, createdAt: 5 }],
+    items: [{ steleId: 'u1', name: '甲', savedAt: 300, groupId: 'g-x' }] } });
+  const v2 = await S.read();
+  check('1→2 迁移：item.updatedAt=savedAt、group.updatedAt=createdAt、tombstones 为空',
+    v2.schema === 2 && v2.items[0].updatedAt === 300 &&
+    v2.groups.find(g => g.id === 'g-x').updatedAt === 5 &&
+    v2.groups.find(g => g.id === BEEN).updatedAt === 0 &&
+    v2.groups.find(g => g.id === WANT).updatedAt === 1 &&
+    Array.isArray(v2.tombstones) && v2.tombstones.length === 0);
+  check('1→2 迁移：读时落盘一次（库内已是 schema 2）', lib().schema === 2 && lib().items[0].updatedAt === 300);
+  const v2b = await S.read();
+  check('1→2 迁移：再读不重复迁移（migrated=false）', v2b.migrated === false && v2b.schema === 2);
+
+  reset();
+  await S.add({ steleId: 't1', name: '甲', savedAt: 1000 }, { groupId: BEEN, keepSavedAt: true });
+  check('add：写 updatedAt', Number.isFinite(lib().items[0].updatedAt) && lib().items[0].updatedAt >= 1000);
+  await S.remove('t1');
+  const tombItem = lib().tombstones[0] || {};
+  check('remove：写 item 墓碑（kind/key/groupId/deletedAt）',
+    lib().tombstones.length === 1 && tombItem.kind === 'item' && tombItem.key === 't1' &&
+    tombItem.groupId === BEEN && Number.isFinite(tombItem.deletedAt));
+  await S.add({ steleId: 't1', name: '甲' }, { groupId: WANT });
+  check('re-add 同 key：清掉 item 墓碑',
+    lib().tombstones.filter(t => t.kind === 'item' && t.key === 't1').length === 0 &&
+    lib().items.some(x => x.steleId === 't1' && x.groupId === WANT));
+
+  reset();
+  const mvG = await S.createGroup('移动组');
+  await S.add({ steleId: 'mv1', name: '乙' }, { groupId: WANT });
+  const mvBefore = lib().items.find(x => x.steleId === 'mv1').updatedAt;
+  await new Promise(r => setTimeout(r, 2));
+  await S.move('mv1', mvG.group.id);
+  const moved = lib().items.find(x => x.steleId === 'mv1');
+  check('move：updatedAt 单调递增且落到新组', moved.updatedAt > mvBefore && moved.groupId === mvG.group.id);
+  const renBefore = lib().groups.find(g => g.id === mvG.group.id).updatedAt;
+  await new Promise(r => setTimeout(r, 2));
+  await S.renameGroup(mvG.group.id, '移动组2');
+  check('renameGroup：组 updatedAt 递增', lib().groups.find(g => g.id === mvG.group.id).updatedAt > renBefore);
+
+  reset();
+  const dgx = await S.createGroup('要删组');
+  await S.add({ steleId: 'dg1', name: '丙' }, { groupId: dgx.group.id });
+  const dgBefore = lib().items.find(x => x.steleId === 'dg1').updatedAt;
+  await new Promise(r => setTimeout(r, 2));
+  const dgr = await S.deleteGroup(dgx.group.id);
+  check('deleteGroup：group 墓碑 + 条目回「想去」+ updatedAt 递增',
+    dgr.ok === true && lib().tombstones.some(t => t.kind === 'group' && t.key === dgx.group.id) &&
+    lib().items.find(x => x.steleId === 'dg1').groupId === WANT &&
+    lib().items.find(x => x.steleId === 'dg1').updatedAt > dgBefore);
+
+  // 墓碑剪枝：超期（>180 天）与超量（>1000）在写入时清理
+  reset();
+  const now = Date.now();
+  const oldTombs = [];
+  for (let i = 0; i < 900; i++) oldTombs.push({ kind: 'item', key: 'old' + i, deletedAt: now - i });
+  oldTombs.push({ kind: 'item', key: 'expired', deletedAt: now - 181 * 24 * 60 * 60 * 1000 });
+  for (let i = 0; i < 300; i++) oldTombs.push({ kind: 'item', key: 'new' + i, deletedAt: now + i });
+  chrome.storage.local.set({ [KEY]: { schema: 2,
+    groups: defaultGroups().map(g => ({ ...g, updatedAt: g.createdAt })), items: [], tombstones: oldTombs } });
+  await S.add({ steleId: 'prune1', name: '触发写入' }, { groupId: WANT });
+  const pruned = lib().tombstones;
+  check('墓碑剪枝：超期删除、总量 ≤1000', pruned.length <= 1000 && pruned.length > 0 &&
+    !pruned.some(t => t.key === 'expired') && pruned.some(t => t.key === 'new299'));
+
+  // 导出 v2：结构 + groupName 快照 + 脱敏
+  reset();
+  const exG = await S.createGroup('出片组');
+  await S.add({ steleId: 'x1', name: '甲', amapKey: 'AK_SHOULD_NOT_LEAK' }, { groupId: exG.group.id });
+  await S.add({ steleId: 'x2', name: '乙', baiduAk: 'BAIDU_SHOULD_NOT_LEAK' }, { groupId: WANT });
+  await S.remove('x2');
+  const exp2 = JSON.parse(await S.exportJSON());
+  check('export v2：schema/exportedAt/groups/items/tombstones 齐全',
+    exp2.schema === 2 && Number.isFinite(exp2.exportedAt) &&
+    Array.isArray(exp2.groups) && exp2.items.length === 1 && exp2.tombstones.length === 1);
+  check('export v2：groups 含自定义组、item.groupName 与所属组一致',
+    exp2.groups.some(g => g.id === exG.group.id && g.name === '出片组' && Number.isFinite(g.updatedAt)) &&
+    exp2.items[0].groupId === exG.group.id && exp2.items[0].groupName === '出片组');
+  check('export v2：继续脱敏（不含 amapKey/baiduAk/凭据）',
+    !JSON.stringify(exp2).includes('amapKey') && !JSON.stringify(exp2).includes('baiduAk') &&
+    !JSON.stringify(exp2).includes('SHOULD_NOT_LEAK'));
+
+  // round-trip：导出 → 清空 → 按导出恢复（含自定义组），条目仍回原组
+  const backup = exp2;
+  reset();
+  const idMap = new Map();
+  for (const g of backup.groups) {
+    if (g.system) { idMap.set(g.id, g.id); continue; }
+    const r = await S.createGroup(g.name);
+    idMap.set(g.id, r.ok ? r.group.id : WANT);
+  }
+  for (const it of backup.items) {
+    await S.add({ steleId: it.steleId, name: it.name, savedAt: it.savedAt },
+      { groupId: idMap.get(it.groupId) || WANT, keepSavedAt: true });
+  }
+  const restored = lib();
+  check('round-trip：恢复后条目仍归原组（按 groupId / 组名）',
+    restored.items.find(x => x.steleId === 'x1').groupId ===
+      restored.groups.find(g => g.name === '出片组').id &&
+    restored.items.find(x => x.steleId === 'x1').savedAt === backup.items[0].savedAt);
+
+  reset();
+  chrome.storage.local.set({ [KEY]: { schema: 3, groups: [], items: [] } });
+  check('schema 3：拒写 reason=schema', (await S.add({ steleId: 'z1' }, { groupId: WANT })).reason === 'schema');
+  reset();
+  chrome.storage.local.set({ [KEY]: { schema: 1, groups: defaultGroups(),
+    items: [{ steleId: 'legacy1', name: '旧', savedAt: 9, groupId: WANT }] } });
+  const legacy = await S.read();
+  check('schema 1 仍可读并迁移到 2', legacy.schema === 2 && legacy.items[0].updatedAt === 9);
 
   // 1MB 上限：常量 + 分支存在（正常字段长度下到不了 1MB，防止静默截断）
   const src = fs.readFileSync(path.join(env.SRC, 'shared/favorites-store.js'), 'utf8');
