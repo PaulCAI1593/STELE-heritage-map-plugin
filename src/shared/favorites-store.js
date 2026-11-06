@@ -21,7 +21,13 @@
 
   const KEY = 'hmp:favorites:v1';
   const SCHEMA = 1;
+  // legacy「未分组」：仅供迁移识别（可能出现在已装的 0.5.0 测试包里）
   const DEFAULT_GROUP_ID = 'g-default';
+  const DEFAULT_WANT_ID = 'g-want';
+  const DEFAULT_GROUPS = [
+    { id: 'g-been', name: '已去', system: true, createdAt: 0 },
+    { id: 'g-want', name: '想去', system: true, createdAt: 1 },
+  ];
   const LIMITS = { items: 500, groups: 30, groupName: 24, bytes: 1024 * 1024 };
 
   // #36 P2-2(a)：写串行队列。所有变更都是「整键回读-改-写」，
@@ -62,7 +68,7 @@
   function defaultLibrary() {
     return {
       schema: SCHEMA,
-      groups: [{ id: DEFAULT_GROUP_ID, name: '未分组', system: true, createdAt: 0 }],
+      groups: DEFAULT_GROUPS.map(g => ({ ...g })),
       items: [],
     };
   }
@@ -96,7 +102,8 @@
         address: info.address == null || info.address === '' ? null : clip(info.address, 300) || null,
       },
       savedAt: Number.isFinite(raw.savedAt) ? raw.savedAt : Date.now(),
-      groupId: raw.groupId ? clip(raw.groupId, 40) : DEFAULT_GROUP_ID,
+      // 缺分组不在清洗层兜底：由 add() 判 need-group / 迁移把旧数据归到「想去」
+      groupId: raw.groupId ? clip(raw.groupId, 40) : '',
     };
   }
 
@@ -114,13 +121,10 @@
         groups.push({
           id: clip(g.id, 40),
           name: clip(g.name, 40).trim() || '未命名分组',
-          system: g.id === DEFAULT_GROUP_ID ? true : g.system === true,
+          system: g.id === 'g-been' || g.id === 'g-want' || g.id === DEFAULT_GROUP_ID ? true : g.system === true,
           createdAt: Number.isFinite(g.createdAt) ? g.createdAt : 0,
         });
       }
-    }
-    if (!groups.some(g => g.id === DEFAULT_GROUP_ID)) {
-      groups.unshift({ id: DEFAULT_GROUP_ID, name: '未分组', system: true, createdAt: 0 });
     }
     const items = [];
     if (Array.isArray(raw.items)) {
@@ -133,13 +137,43 @@
     return { schema: SCHEMA, groups, items };
   }
 
+  /**
+   * 0.5.0 追加：默认两组「已去 / 想去」+ legacy 迁移。
+   * · 缺 g-been / g-want → 补到最前（system）；
+   * · legacy g-default（未分组）条目 → g-want，组删除；
+   * · 其它找不到组的条目 → g-want；
+   * 不改 schema、不动 savedAt、不重排 items；返回是否有变化（由读路径决定是否落盘）。
+   */
+  function migrateLibrary(lib) {
+    let changed = false;
+    const byId = new Map(lib.groups.map(g => [g.id, g]));
+    DEFAULT_GROUPS.forEach((dg, i) => {
+      const g = byId.get(dg.id);
+      if (!g) {
+        lib.groups.splice(i, 0, { ...dg });
+        changed = true;
+      } else {
+        if (g.system !== true) { g.system = true; changed = true; }
+        if (g.name !== dg.name) { g.name = dg.name; changed = true; }
+      }
+    });
+    if (lib.groups.some(g => g.id === DEFAULT_GROUP_ID)) {
+      lib.items.forEach(it => { if (it.groupId === DEFAULT_GROUP_ID) it.groupId = DEFAULT_WANT_ID; });
+      lib.groups = lib.groups.filter(g => g.id !== DEFAULT_GROUP_ID);
+      changed = true;
+    }
+    const valid = new Set(lib.groups.map(g => g.id));
+    lib.items.forEach(it => { if (!valid.has(it.groupId)) { it.groupId = DEFAULT_WANT_ID; changed = true; } });
+    return changed;
+  }
+
   function byteLength(s) {
     try { return new TextEncoder().encode(s).length; } catch (e) { return s.length * 2; }
   }
 
   function groupNameOf(lib, id) {
     const g = lib.groups.find(x => x.id === id);
-    return g ? g.name : '未分组';
+    return g ? g.name : '收藏';
   }
 
   /** 写前回读：不存在 → 空库（可写）；存在但不合法 → 拒绝，避免覆盖用户数据 */
@@ -148,6 +182,7 @@
     if (raw == null) return { ok: true, library: defaultLibrary() };
     const lib = sanitizeLibrary(raw);
     if (!lib) return { ok: false, reason: 'schema' };
+    migrateLibrary(lib);   // 迁移随本次写操作一起落盘（失败也不会把旧结构写回）
     return { ok: true, library: lib };
   }
 
@@ -161,10 +196,12 @@
 
   async function read() {
     const raw = (await getRaw())[KEY];
-    if (raw == null) return { empty: true };
+    if (raw == null) return { empty: true, schema: SCHEMA, groups: defaultLibrary().groups, items: [] };
     const lib = sanitizeLibrary(raw);
     if (!lib) return { empty: true, corrupt: true };
-    return { schema: lib.schema, groups: lib.groups, items: lib.items };
+    const migrated = migrateLibrary(lib);
+    if (migrated) await writeLibrary(lib);   // 只在真有变化时落盘一次
+    return { schema: lib.schema, groups: lib.groups, items: lib.items, migrated };
   }
 
   /** listGroups 也能拿到空库的默认组 */
@@ -172,7 +209,9 @@
     const raw = (await getRaw())[KEY];
     if (raw == null) return defaultLibrary();
     const lib = sanitizeLibrary(raw);
-    return lib || defaultLibrary();
+    if (!lib) return defaultLibrary();
+    if (migrateLibrary(lib)) await writeLibrary(lib);
+    return lib;
   }
 
   async function addNow(item, opts) {
@@ -186,7 +225,9 @@
       return { ok: false, reason: 'duplicate', groupName: groupNameOf(lib, existing.groupId) };
     }
     if (lib.items.length >= LIMITS.items) return { ok: false, reason: 'limit' };
-    if (!lib.groups.some(g => g.id === cleaned.groupId)) cleaned.groupId = DEFAULT_GROUP_ID;
+    const groupId = (opts && opts.groupId) || cleaned.groupId;
+    if (!groupId || !lib.groups.some(g => g.id === groupId)) return { ok: false, reason: 'need-group' };
+    cleaned.groupId = groupId;
     if (!(opts && opts.keepSavedAt) || !Number.isFinite(cleaned.savedAt)) cleaned.savedAt = Date.now();
     lib.items.push(cleaned);
     lib.items.sort((a, b) => b.savedAt - a.savedAt);
@@ -211,7 +252,8 @@
     const loaded = await loadForWrite();
     if (!loaded.ok) return loaded;
     const lib = loaded.library;
-    const gid = groupId || DEFAULT_GROUP_ID;
+    const gid = groupId;
+    if (!gid) return { ok: false, reason: 'need-group' };
     if (!lib.groups.some(g => g.id === gid)) return { ok: false, reason: 'unknown-group' };
     const item = lib.items.find(x => x.steleId === steleId);
     if (!item) return { ok: false, reason: 'not-found' };
@@ -275,13 +317,13 @@
     const loaded = await loadForWrite();
     if (!loaded.ok) return loaded;
     const lib = loaded.library;
-    if (id === DEFAULT_GROUP_ID) return { ok: false, reason: 'system' };
     const idx = lib.groups.findIndex(x => x.id === id);
     if (idx < 0) return { ok: false, reason: 'not-found' };
+    if (lib.groups[idx].system) return { ok: false, reason: 'system' };
     lib.groups.splice(idx, 1);
     let moved = 0;
     for (const it of lib.items) {
-      if (it.groupId === id) { it.groupId = DEFAULT_GROUP_ID; moved++; }
+      if (it.groupId === id) { it.groupId = DEFAULT_WANT_ID; moved++; }
     }
     const w = await writeLibrary(lib);
     if (!w.ok) return w;
@@ -302,7 +344,7 @@
     const lib = await readLibrary();
     let items = lib.items;
     if (scope === 'group') {
-      const gid = groupId || DEFAULT_GROUP_ID;
+      const gid = groupId || DEFAULT_WANT_ID;
       items = items.filter(x => x.groupId === gid);
     }
     if (!q) return items.slice();
@@ -319,7 +361,7 @@
   }
 
   window.HMP.favoritesStore = {
-    KEY, SCHEMA, LIMITS, DEFAULT_GROUP_ID,
+    KEY, SCHEMA, LIMITS, DEFAULT_GROUP_ID, DEFAULT_GROUPS, DEFAULT_WANT_ID,
     read, add, remove, move, isSaved,
     listGroups, createGroup, renameGroup, deleteGroup,
     search, exportJSON,

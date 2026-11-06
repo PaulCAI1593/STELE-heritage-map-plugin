@@ -283,3 +283,23 @@
 @media (prefers-reduced-motion: reduce) {
   #hmp-opening-card * { transition: none !important; animation: none !important; }
 }
+
+/* ===== #39 收藏二选一（已去 / 想去 / 取消） ===== */
+#hmp-opening-card .hmp-fav-choose {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#hmp-opening-card .hmp-fav-choose .hmp-btn {
+  min-height: 40px;
+  min-width: 44px;
+  padding: 8px 14px;
+}
+
+#hmp-opening-card .hmp-fav-choose .hmp-fav-cancel {
+  color: #3f5d8a;
+  background: #ffffff;
+  border-color: #c8d2e0;
+}

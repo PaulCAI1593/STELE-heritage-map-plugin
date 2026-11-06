@@ -321,3 +321,7 @@ html,body{width:var(--hmp-popup-w,400px);margin:0;background:var(--hmp-page)}
 .undo .btn{flex:0 0 auto;align-self:center;min-height:40px;padding:0 12px;font-size:12.5px}
 .fav-tools{display:flex;justify-content:flex-end;padding:6px 12px 0}
 .fav-tools .btn{flex:0 0 auto;min-height:40px;padding:0 12px;font-size:12.5px}
+
+/* #39：系统分组（已去/想去）在组菜单里置灰 */
+.menu-i.is-disabled{opacity:.45;cursor:not-allowed}
+.menu-i.is-disabled:hover{background:transparent}

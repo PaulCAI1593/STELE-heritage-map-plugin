@@ -27,7 +27,7 @@
 
   <nav class="ptabs" role="tablist" aria-label="页面">
     <button class="ptab" type="button" role="tab" id="tab-fav" aria-selected="true" aria-controls="panel-fav">收藏</button>
-    <button class="ptab" type="button" role="tab" id="tab-set" aria-selected="false" aria-controls="panel-set" tabindex="-1">设置</button>
+    <button class="ptab" type="button" role="tab" id="tab-set" aria-selected="false" aria-controls="panel-set" tabindex="-1">开放时间</button>
   </nav>
 
   <!-- ================= 收藏页（默认，D-114） ================= -->
@@ -38,8 +38,8 @@
         <input id="favQuery" type="search" placeholder="搜索名称或地址" autocomplete="off" spellcheck="false">
       </label>
       <div class="rng" role="radiogroup" aria-label="搜索范围">
-        <button class="rng-b" type="button" id="scopeGroup" role="radio" aria-checked="true" data-scope="group">当前组</button>
-        <button class="rng-b" type="button" id="scopeAll" role="radio" aria-checked="false" data-scope="all">全部</button>
+        <button class="rng-b" type="button" id="scopeGroup" role="radio" aria-checked="false" data-scope="group">当前组</button>
+        <button class="rng-b" type="button" id="scopeAll" role="radio" aria-checked="true" data-scope="all">全部</button>
       </div>
     </div>
     <p class="found" id="favFound" aria-live="polite"></p>

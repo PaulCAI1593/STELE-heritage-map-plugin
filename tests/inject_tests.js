@@ -812,11 +812,16 @@ function resetDoc() {
   }
 
 
-  // ============ 6i. #32a 卡片收藏开关 ============
-  console.log('\n=== 6i. 卡片收藏开关（#32a）===');
+  // ============ 6i. #32a 卡片收藏开关 / #39 二选一 ============
+  console.log('\n=== 6i. 卡片收藏开关 + 二选一（#32a/#39）===');
   {
     const FKEY = 'hmp:favorites:v1';
     const FSTORE = window.HMP.favoritesStore;
+    const DEF_GROUPS = [
+      { id: 'g-been', name: '已去', system: true, createdAt: 0 },
+      { id: 'g-want', name: '想去', system: true, createdAt: 1 },
+    ];
+    const libWith = items => ({ schema: 1, groups: DEF_GROUPS.map(g => ({ ...g })), items: items || [] });
     const resetFav = () => { delete chrome.storage.local._store[FKEY]; };
     const foundState = (extra) => Object.assign({
       card: 'single', kind: 'found',
@@ -835,70 +840,138 @@ function resetDoc() {
       const n = card ? card.querySelector('.hmp-fav-note') : null;
       return n ? collectText(n) : '';
     };
+    const favRow = () => {
+      const card = document.getElementById(CARD_ID);
+      return card ? card.querySelector('.hmp-fav-row') : null;
+    };
+    const picks = () => {
+      const card = document.getElementById(CARD_ID);
+      return card ? card.querySelectorAll('.hmp-fav-pick') : [];
+    };
+    const pickBy = gid => picks().find(b => b.attrs['data-group'] === gid) || null;
+    const cancelBtn = () => {
+      const card = document.getElementById(CARD_ID);
+      return card ? card.querySelector('.hmp-fav-cancel') : null;
+    };
+    const storedItems = () => (chrome.storage.local._store[FKEY] || {}).items || [];
 
     resetFav();
     CARD.renderState(foundState({ steleId: 'id-a', favorited: false }));
     check('有 steleId 时显示收藏按钮，初始文案「收藏」', !!favBtn() && collectText(favBtn()) === '收藏',
       favBtn() ? collectText(favBtn()) : 'null');
     check('按钮带 aria-pressed=false', favBtn() && favBtn().attrs['aria-pressed'] === 'false');
+    check('未点收藏时不展开二选一', picks().length === 0 && cancelBtn() === null);
+
     favBtn().fire('click');
     await sleep(20);
-    const lib1 = (chrome.storage.local._store[FKEY] || {});
-    check('点击后写入 hmp:favorites:v1（1 条）', (lib1.items || []).length === 1, JSON.stringify(lib1).slice(0, 200));
+    check('#39：点「收藏」只展开二选一，不直接写库（库 0 条）',
+      picks().length === 2 && !!pickBy('g-been') && !!pickBy('g-want') && !!cancelBtn() && storedItems().length === 0,
+      'picks=' + picks().length + ' items=' + storedItems().length);
+    check('#39：二选一文案为「已去 / 想去」',
+      collectText(pickBy('g-been')) === '已去' && collectText(pickBy('g-want')) === '想去');
+    check('#39：展开时原「收藏」按钮隐藏、行标记 data-choosing=true',
+      favBtn().hidden === true && favRow().attrs['data-choosing'] === 'true');
+
+    cancelBtn().fire('click');
+    await sleep(20);
+    check('#39：点「取消」收起且不写库',
+      picks().length === 0 && favBtn().hidden === false && storedItems().length === 0);
+
+    favBtn().fire('click');
+    await sleep(10);
+    const rowKd = favRow()._listeners.keydown && favRow()._listeners.keydown[0];
+    if (rowKd) rowKd({ key: 'Escape', stopPropagation() {} });
+    await sleep(10);
+    check('#39：Esc 收起二选一', picks().length === 0 && favBtn().hidden === false);
+
+    favBtn().fire('click');
+    await sleep(10);
+    pickBy('g-want').fire('click');
+    await sleep(40);
+    const l1 = chrome.storage.local._store[FKEY] || {};
+    check('#39：选「想去」写库 1 条、groupId=g-want',
+      (l1.items || []).length === 1 && l1.items[0].steleId === 'id-a' && l1.items[0].groupId === 'g-want',
+      JSON.stringify(l1).slice(0, 200));
+    check('#39：选完按钮回「已收藏 ✓」、二选一收起',
+      favBtn().textContent === '已收藏 ✓' && favBtn().attrs['aria-label'] === '取消收藏' &&
+      picks().length === 0 && favBtn().hidden === false,
+      favBtn().textContent + ' picks=' + picks().length);
+    check('#39：note 文案「已收藏到「想去」」', favNote() === '已收藏到「想去」', favNote());
     check('快照字段齐全（steleId/name/tier/address/admin/match/info）',
-      lib1.items && lib1.items[0] && lib1.items[0].steleId === 'id-a' &&
-      lib1.items[0].name === '测试点位' && lib1.items[0].tier === '全国重点文物保护单位' &&
-      lib1.items[0].address === '某路1号' && Array.isArray(lib1.items[0].admin) &&
-      lib1.items[0].match && lib1.items[0].match.provider === 'amap' &&
-      lib1.items[0].info && lib1.items[0].info.opentime === '08:00-17:30',
-      JSON.stringify(lib1.items && lib1.items[0]).slice(0, 300));
-    check('快照不含 Key/AK 字段', !JSON.stringify(lib1).includes('amapKey') && !JSON.stringify(lib1).includes('baiduAk'));
-    check('收藏后按钮态变「已收藏」（aria-label=取消收藏）', favBtn() && favBtn().attrs['aria-label'] === '取消收藏', favBtn() && favBtn().attrs['aria-label']);
+      l1.items[0].name === '测试点位' && l1.items[0].tier === '全国重点文物保护单位' &&
+      l1.items[0].address === '某路1号' && Array.isArray(l1.items[0].admin) &&
+      l1.items[0].match && l1.items[0].match.provider === 'amap' &&
+      l1.items[0].info && l1.items[0].info.opentime === '08:00-17:30',
+      JSON.stringify(l1.items[0]).slice(0, 300));
+    check('快照不含 Key/AK 字段', !JSON.stringify(l1).includes('amapKey') && !JSON.stringify(l1).includes('baiduAk'));
+
     favBtn().fire('click');
-    await sleep(20);
-    check('再次点击取消收藏（0 条、aria-label 回收藏该点位）',
-      ((chrome.storage.local._store[FKEY] || {}).items || []).length === 0 &&
-      favBtn().attrs['aria-label'] === '收藏该点位', favBtn() && favBtn().attrs['aria-label']);
+    await sleep(30);
+    check('已收藏态再点击 = 取消收藏（0 条、按钮回「收藏」）',
+      storedItems().length === 0 && favBtn().textContent === '收藏' &&
+      favBtn().attrs['aria-label'] === '收藏该点位',
+      'items=' + storedItems().length + ' text=' + favBtn().textContent);
+
+    // 选「已去」
+    resetFav();
+    CARD.renderState(foundState({ steleId: 'id-been', favorited: false }));
+    favBtn().fire('click');
+    await sleep(10);
+    pickBy('g-been').fire('click');
+    await sleep(40);
+    check('#39：选「已去」→ groupId=g-been、note「已收藏到「已去」」',
+      storedItems().length === 1 && storedItems()[0].groupId === 'g-been' &&
+      favNote() === '已收藏到「已去」',
+      storedItems()[0] && storedItems()[0].groupId + ' / ' + favNote());
 
     // 重复收藏：库里已有同 id，但渲染态是未收藏
     resetFav();
-    await FSTORE.add({ steleId: 'id-b', name: '已存在', match: { provider: 'baidu' } });
+    await FSTORE.add({ steleId: 'id-b', name: '已存在', match: { provider: 'baidu' } }, { groupId: 'g-want' });
     CARD.renderState(foundState({ steleId: 'id-b', favorited: false, siteName: '已存在' }));
     favBtn().fire('click');
-    await sleep(20);
-    check('重复收藏：提示「已在收藏夹」且按钮转「已收藏」',
-      favNote().includes('已在收藏夹') && favBtn().attrs['aria-label'] === '取消收藏',
+    await sleep(10);
+    pickBy('g-want').fire('click');
+    await sleep(40);
+    check('#39：重复收藏提示「已在收藏夹（想去）」且按钮转「已收藏」',
+      favNote().includes('已在收藏夹') && favNote().includes('想去') &&
+      favBtn().attrs['aria-label'] === '取消收藏',
       favNote() + ' / ' + favBtn().attrs['aria-label']);
-    check('重复收藏不改原条目', (chrome.storage.local._store[FKEY].items || []).length === 1);
+    check('重复收藏不改原条目', storedItems().length === 1);
 
     // 上限：预置 500 条
     resetFav();
     const many = [];
-    for (let i = 0; i < 500; i++) many.push({ steleId: 'x' + i, name: '点' + i, savedAt: 1000 + i });
-    chrome.storage.local.set({ [FKEY]: { schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }], items: many } });
+    for (let i = 0; i < 500; i++) many.push({ steleId: 'x' + i, name: '点' + i, savedAt: 1000 + i, groupId: 'g-want' });
+    chrome.storage.local.set({ [FKEY]: libWith(many) });
     CARD.renderState(foundState({ steleId: 'id-c', favorited: false }));
     favBtn().fire('click');
-    await sleep(20);
+    await sleep(10);
+    pickBy('g-want').fire('click');
+    await sleep(40);
     check('满 500 条：提示上限、按钮仍「收藏」、库仍 500 条',
       favNote().includes('收藏夹已满') && favBtn().attrs['aria-label'] === '收藏该点位' &&
-      (chrome.storage.local._store[FKEY].items || []).length === 500,
+      storedItems().length === 500,
       favNote() + ' / ' + favBtn().attrs['aria-label']);
 
-    // 无 steleId → 不显示按钮
-    // #36 P2-2(b)：外部（弹窗/其它标签页）改收藏库 → 已渲染卡片按钮态跟随
+    // #36 P2-2(b)：外部（弹窗/其它标签页）改收藏库 → 已渲染卡片按钮态跟随；
+    // #39：从「未收藏」被外部改成「已收藏」时，展开中的二选一要收起。
     resetFav();
-    chrome.storage.local.set({ [FKEY]: { schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }], items: [] } });
+    chrome.storage.local.set({ [FKEY]: libWith([]) });
     CARD.renderState(foundState({ steleId: 'id-ext', favorited: false }));
     check('外部写库前：按钮为「收藏」', favBtn() && favBtn().attrs['aria-label'] === '收藏该点位');
+    favBtn().fire('click');
+    await sleep(10);
+    check('外部写库前：二选一已展开', picks().length === 2);
     chrome.storage.local.set({
-      [FKEY]: {
-        schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }],
-        items: [{ steleId: 'id-ext', name: '弹窗收藏', groupId: 'g-default', savedAt: 1 }],
-      },
+      [FKEY]: libWith([{ steleId: 'id-ext', name: '弹窗收藏', groupId: 'g-want', savedAt: 1 }]),
     });
-    check('外部收藏后：按钮变「已收藏」（onChanged 刷新）',
-      favBtn() && favBtn().attrs['aria-label'] === '取消收藏', favBtn() && favBtn().attrs['aria-label']);
-    chrome.storage.local.set({ [FKEY]: { schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }], items: [] } });
+    await sleep(20);
+    check('外部收藏后：按钮变「已收藏」且展开态收起',
+      favBtn() && favBtn().attrs['aria-label'] === '取消收藏' && picks().length === 0 &&
+      favBtn().hidden === false,
+      (favBtn() && favBtn().attrs['aria-label']) + ' picks=' + picks().length);
+    chrome.storage.local.set({ [FKEY]: libWith([]) });
+    await sleep(20);
     check('外部取消收藏后：按钮回「收藏」',
       favBtn() && favBtn().attrs['aria-label'] === '收藏该点位', favBtn() && favBtn().attrs['aria-label']);
 

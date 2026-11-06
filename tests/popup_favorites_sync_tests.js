@@ -18,7 +18,17 @@ class El {
     this.className = ''; this.hidden = false; this.disabled = false; this.checked = false;
     this.type = 'text'; this.attrs = {}; this.children = []; this._span = { textContent: '' };
     this._h = {}; this.tabIndex = 0;
-    this.classList = { add() {}, remove() {}, contains() { return false; } };
+    this._cls = new Set();
+    this.classList = {
+      add: c => this._cls.add(c),
+      remove: c => this._cls.delete(c),
+      contains: c => this._cls.has(c),
+      toggle: (c, force) => {
+        const want = force === undefined ? !this._cls.has(c) : !!force;
+        if (want) this._cls.add(c); else this._cls.delete(c);
+        return want;
+      },
+    };
     this.tagName = 'DIV';
   }
   set innerHTML(v) { this._html = String(v == null ? '' : v); if (this._html === '') this.children = []; }
@@ -123,7 +133,14 @@ function build(opts) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function lib(items) {
-  return { schema: 1, groups: [{ id: 'g-default', name: '未分组', system: true, createdAt: 0 }], items: items || [] };
+  return {
+    schema: 1,
+    groups: [
+      { id: 'g-been', name: '已去', system: true, createdAt: 0 },
+      { id: 'g-want', name: '想去', system: true, createdAt: 1 },
+    ],
+    items: items || [],
+  };
 }
 
 (async () => {
@@ -137,14 +154,14 @@ function lib(items) {
 
     // 卡片侧收藏一条 → 真实写 storage（桩派发 onChanged）→ 弹窗列表出现该条
     chrome.storage.local.set({ [FKEY]: lib([
-      { steleId: 's1', name: '龙华寺', address: '龙华路2853号', groupId: 'g-default', savedAt: 1000 },
+      { steleId: 's1', name: '龙华寺', address: '龙华路2853号', groupId: 'g-been', savedAt: 1000 },
     ]) });
     await sleep(30);
     check('外部收藏后：列表出现 1 条、空态隐藏',
       H.els.favList.children.length === 1 && H.els.favEmpty.hidden === true,
       'children=' + H.els.favList.children.length + ' emptyHidden=' + H.els.favEmpty.hidden);
-    check('外部收藏后：分组 chips 计数跟上（未分组=1）',
-      H.els.favChips.children.some(b => b.attrs['data-g'] === 'g-default' &&
+    check('外部收藏后：分组 chips 计数跟上（已去=1）',
+      H.els.favChips.children.some(b => b.attrs['data-g'] === 'g-been' &&
         b.children.some(c => c.className === 'n' && c.textContent === '1')),
       'chips=' + H.els.favChips.children.length);
 
@@ -157,11 +174,30 @@ function lib(items) {
 
     // 其它 storage 键 / 非 local 区不触发刷新（负例）
     H.onChanged.emit({ hmpTheme: { newValue: 'glass' } });
-    H.onChanged.emit({ [FKEY]: { newValue: lib([{ steleId: 's2', name: '甲', groupId: 'g-default', savedAt: 1 }]) } }, 'sync');
+    H.onChanged.emit({ [FKEY]: { newValue: lib([{ steleId: 's2', name: '甲', groupId: 'g-want', savedAt: 1 }]) } }, 'sync');
     await sleep(30);
     check('负例：其它键 / 非 local 区的变化不刷新收藏页',
       H.els.favList.children.length === 0,
       'children=' + H.els.favList.children.length);
+  }
+
+  console.log('\n=== #39 默认两组 / 默认范围全部 / 系统组置灰 ===');
+  {
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    check('#39：空库 chips 就是「已去 / 想去」两组，没有未分组',
+      H.els.favChips.children.length === 2 &&
+      H.els.favChips.children[0].children.some(c => c.className === 'gt' && c.textContent === '已去') &&
+      H.els.favChips.children[1].children.some(c => c.className === 'gt' && c.textContent === '想去') &&
+      !H.els.favChips.children.some(b => b.children.some(c => c.className === 'gt' && c.textContent === '未分组')));
+    check('#39：默认范围是「全部」',
+      H.popup.favorites.state().scope === 'all' &&
+      H.els.scopeAll.attrs['aria-checked'] === 'true' && H.els.scopeGroup.attrs['aria-checked'] === 'false');
+    check('#39：系统组在组菜单里置灰、aria-disabled=true',
+      H.els.favRenameGroup.classList.contains('is-disabled') &&
+      H.els.favDeleteGroup.classList.contains('is-disabled') &&
+      H.els.favRenameGroup.attrs['aria-disabled'] === 'true' &&
+      /系统分组/.test(H.els.favRenameGroup.attrs.title || ''));
   }
 
   console.log('\n=== 删组确认文案 / 错误文案（P3-1、P3-4） ===');
@@ -171,7 +207,7 @@ function lib(items) {
     const f = H.popup.favorites;
     check('deleteGroupConfirmText：n>0 带组名与条数',
       f.deleteGroupConfirmText('2026 上海行', 2) ===
-        '删除分组「2026 上海行」？组内 2 条收藏会移到「未分组」，不会丢失。');
+        '删除分组「2026 上海行」？组内 2 条收藏会移到「想去」，不会丢失。');
     check('deleteGroupConfirmText：n=0 省略条目句',
       f.deleteGroupConfirmText('空组', 0) === '删除分组「空组」？组内没有收藏，删除不影响收藏内容。');
     check('errorText：limit-groups 与 limit 文案分开',
@@ -180,7 +216,8 @@ function lib(items) {
     check('errorText：duplicate-name / invalid-name / system 三分支',
       f.errorText('duplicate-name') === '已有同名分组，换个名字。' &&
       f.errorText('invalid-name').indexOf('24 字') >= 0 &&
-      f.errorText('system').indexOf('系统分组') >= 0);
+      f.errorText('system').indexOf('系统分组') >= 0 &&
+      f.errorText('system-group', { groupName: '已去' }) === '「已去」是系统分组，不能删除或改名。');
   }
 
   console.log('\n=== 撤销文案（P3-5） ===');
@@ -189,7 +226,7 @@ function lib(items) {
     await sleep(20);
     const f = H.popup.favorites;
     check('单条撤销：带名称',
-      f.undoText({ items: [{ item: { name: '龙华寺' }, groupId: 'g-default' }] }) === '已取消收藏「龙华寺」');
+      f.undoText({ items: [{ item: { name: '龙华寺' }, groupId: 'g-want' }] }) === '已取消收藏「龙华寺」');
     check('多条撤销：给条数',
       f.undoText({ items: [{ item: { name: '甲' } }, { item: { name: '乙' } }, {}] }) === '已取消收藏 3 条');
   }

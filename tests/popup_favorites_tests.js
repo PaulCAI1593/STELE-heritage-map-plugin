@@ -104,7 +104,7 @@ function grab(name) {
   return js.slice(start, next < 0 ? js.length : next);
 }
 const pure = new Function(
-  'const FAV_GROUP_DEFAULT = "g-default";\n' +
+  'const FAV_GROUP_DEFAULT = "g-want";\n' +
   ['pad2', 'formatSavedAt', 'buildDeepLink', 'buildSearchLink', 'filterFavorites', 'groupCounts', 'undoAlive', 'undoText', 'favErrorText', 'deleteGroupConfirmText']
     .map(grab).join('\n') +
   '\nreturn {pad2, formatSavedAt, buildDeepLink, buildSearchLink, filterFavorites, groupCounts, undoAlive, undoText, favErrorText, deleteGroupConfirmText};'
@@ -112,7 +112,7 @@ const pure = new Function(
 
 
 const items = [
-  { steleId: 'a', name: '龙华寺', address: '龙华路2853号', groupId: 'g-default', savedAt: 1000 },
+  { steleId: 'a', name: '龙华寺', address: '龙华路2853号', groupId: 'g-been', savedAt: 1000 },
   { steleId: 'b', name: 'Shanghai Museum', address: '人民大道201号', groupId: 'g-trip', savedAt: 2000 },
   { steleId: 'c', name: '徐家汇天主堂', address: '蒲西路158号', groupId: 'g-trip', savedAt: 1500 }
 ];
@@ -126,10 +126,10 @@ check('filterFavorites：全部范围合并、名称/地址子串大小写不敏
   pure.filterFavorites(items, '徐家汇', 'all', 'g-trip').length === 1);
 
 check('filterFavorites：tier 不参与搜索',
-  pure.filterFavorites([{ steleId: 'x', name: '甲', address: '', tier: '全国重点', groupId: 'g-default' }], '全国重点', 'all', 'g-default').length === 0);
+  pure.filterFavorites([{ steleId: 'x', name: '甲', address: '', tier: '全国重点', groupId: 'g-want' }], '全国重点', 'all', 'g-want').length === 0);
 
 check('groupCounts：按组计数（含 0 不出现）',
-  JSON.stringify(pure.groupCounts(items)) === JSON.stringify({ 'g-default': 1, 'g-trip': 2 }));
+  JSON.stringify(pure.groupCounts(items)) === JSON.stringify({ 'g-been': 1, 'g-trip': 2 }));
 
 check('buildDeepLink：/zhcn/geo/<id> 单一出口、空 id 返回空串',
   pure.buildDeepLink('82e35243f19442eb8b66416a38f6f0b4') ===
@@ -144,7 +144,7 @@ check('undoAlive：边界 now < expiresAt 才有效',
   pure.undoAlive(null, 0) === false);
 
 check('undoText/formatSavedAt：单条给名称、多条给条数、MM-DD 收藏时间',
-  pure.undoText({ items: [{ item: { name: '龙华寺' }, groupId: 'g-default' }] }) === '已取消收藏「龙华寺」' &&
+  pure.undoText({ items: [{ item: { name: '龙华寺' }, groupId: 'g-want' }] }) === '已取消收藏「龙华寺」' &&
   pure.undoText({ items: [{ item: { name: '甲' } }, { item: { name: '乙' } }] }) === '已取消收藏 2 条' &&
   pure.undoText({ items: [{}] }) === '已取消收藏 1 条' &&
   pure.formatSavedAt(new Date(2026, 0, 9).getTime()) === '01-09 收藏');
@@ -156,18 +156,43 @@ check('favErrorText：上限/分组上限/重名/非法名/系统组/存储失�
   pure.favErrorText('duplicate-name') === '已有同名分组，换个名字。' &&
   pure.favErrorText('invalid-name').indexOf('24 字') >= 0 &&
   pure.favErrorText('system').indexOf('系统分组') >= 0 &&
+  pure.favErrorText('system-group', { groupName: '已去' }) === '「已去」是系统分组，不能删除或改名。' &&
+  pure.favErrorText('need-group') === '请选择分组后再收藏。' &&
   pure.favErrorText('size').indexOf('1MB') >= 0 &&
   pure.favErrorText('storage').length > 0);
 
 check('deleteGroupConfirmText：带组名与条数，n=0 省略条目句（P3-4）',
   pure.deleteGroupConfirmText('2026 上海行', 3) ===
-    '删除分组「2026 上海行」？组内 3 条收藏会移到「未分组」，不会丢失。' &&
+    '删除分组「2026 上海行」？组内 3 条收藏会移到「想去」，不会丢失。' &&
   pure.deleteGroupConfirmText('空组', 0) ===
     '删除分组「空组」？组内没有收藏，删除不影响收藏内容。');
 
 check('popup.js：删组确认用插值函数（不走固定占位文案）',
   /window\.confirm\(deleteGroupConfirmText\(/.test(js) &&
   js.indexOf("'删除这个分组？") < 0);
+
+check('#39：顶部 Tab 文字为「开放时间」，但 panel id/aria-controls 不变（只改文字）',
+  /id="tab-set"[^>]*>开放时间</.test(html) &&
+  /id="tab-set"[^>]*aria-controls="panel-set"/.test(html) &&
+  /id="panel-set"[^>]*aria-labelledby="tab-set"/.test(html));
+
+check('#39：收藏默认范围「全部」（HTML 与 JS 初值一致）',
+  /id="scopeAll"[^>]*aria-checked="true"/.test(html) &&
+  /id="scopeGroup"[^>]*aria-checked="false"/.test(html) &&
+  /let favScope = 'all'/.test(js) && /let favActiveGroup = FAV_GROUP_DEFAULT/.test(js));
+
+check('#39：chips 点组即切回当前组过滤（不是只在「全部」里高亮）',
+  /favScope = 'group';/.test(js) && /renderFavGroupMenuState/.test(js));
+
+check('#39：系统分组在组菜单里置灰且点击给解释文案',
+  /classList\.toggle\('is-disabled', sys\)/.test(js) &&
+  /aria-disabled/.test(js) &&
+  /是系统分组，不能删除或改名/.test(js) &&
+  /\.menu-i\.is-disabled/.test(css));
+
+check('#39：撤销写回原组（add 带 groupId，不靠再 move）',
+  /groupId: rec\.groupId \|\| FAV_GROUP_DEFAULT/.test(js) &&
+  js.indexOf('await store.move(rec.item.steleId') < 0);
 
 check('popup.js：订阅 chrome.storage.onChanged 刷新收藏页（P2-2）',
   /bindFavoritesStorageSync/.test(js) &&
@@ -185,18 +210,18 @@ const reset = () => { chrome.storage.local._store = {}; };
 
 (async () => {
   reset();
-  await S.add({ steleId: 'z1', name: '甲', savedAt: 1234567890 });
-  const kept = await S.add({ steleId: 'z2', name: '乙', savedAt: 1234567890 }, { keepSavedAt: true });
+  await S.add({ steleId: 'z1', name: '甲', savedAt: 1234567890 }, { groupId: 'g-been' });
+  const kept = await S.add({ steleId: 'z2', name: '乙', savedAt: 1234567890 }, { keepSavedAt: true, groupId: 'g-want' });
   check('store.add 支持 keepSavedAt（撤销恢复原收藏时间）',
     kept.ok === true && kept.item.savedAt === 1234567890);
 
   const g = await S.createGroup('待删组');
-  await S.add({ steleId: 'z3', name: '丙' });
+  await S.add({ steleId: 'z3', name: '丙' }, { groupId: 'g-been' });
   await S.move('z3', g.group.id);
   const del = await S.deleteGroup(g.group.id);
   const after = await S.read();
-  check('删组后条目回「未分组」，不丢条目',
-    del.ok === true && after.items.some(x => x.steleId === 'z3' && x.groupId === 'g-default'));
+  check('删组后条目回「想去」，不丢条目',
+    del.ok === true && after.items.some(x => x.steleId === 'z3' && x.groupId === 'g-want'));
 
   const exp = await S.exportJSON();
   check('导出 JSON 脱敏（无 key/ak 字段、含 schema/groups/items）',

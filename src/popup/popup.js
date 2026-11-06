@@ -763,13 +763,14 @@
   // ---------------- 收藏页（#32b） ----------------
   // 视图完全由 items+groups+query+scope+activeGroupId 派生；删除先落盘再移除 UI，
   // 撤销窗口 5 秒（首次删除起算，连删合并计数，窗口不重置）。
-  const FAV_GROUP_DEFAULT = 'g-default';
+  // 0.5.0 追加：默认两组「已去 / 想去」，没有「未分组」；兜底分组用「想去」。
+  const FAV_GROUP_DEFAULT = 'g-want';
   const FAV_UNDO_MS = 5000;
   const FAV_SEARCH_DEBOUNCE = 150;
 
   let activeTab = 'fav';
   let favActiveGroup = FAV_GROUP_DEFAULT;
-  let favScope = 'group';
+  let favScope = 'all';   // 两组后默认看「全部」，否则像丢了收藏
   let favQuery = '';
   let favUndo = null;          // {items:[{item, groupId}], expiresAt, timer}
   let favSearchTimer = null;
@@ -880,10 +881,12 @@
     if (reason === 'size') return '收藏数据过大（超过 1MB），请先删除一些条目。';
     if (reason === 'schema') return '收藏数据版本不兼容，本次操作未写入。';
     if (reason === 'storage') return '本地存储写入失败，请重试。';
-    if (reason === 'duplicate') return '已存在于「' + ((info && info.groupName) || '未分组') + '」';
+    if (reason === 'duplicate') return '已存在于「' + ((info && info.groupName) || '收藏') + '」';
     if (reason === 'duplicate-name') return '已有同名分组，换个名字。';
     if (reason === 'invalid-name') return '分组名不能为空，且不超过 24 字。';
-    if (reason === 'system') return '「未分组」是系统分组，不能删除或改名。';
+    if (reason === 'system') return '系统分组不能删除或改名。';
+    if (reason === 'system-group') return '「' + ((info && info.groupName) || '该分组') + '」是系统分组，不能删除或改名。';
+    if (reason === 'need-group') return '请选择分组后再收藏。';
     if (reason === 'unknown-group') return '目标分组已不存在。';
     if (reason === 'not-found') return '条目已不存在，请刷新。';
     return '操作未完成，请重试。';
@@ -896,7 +899,7 @@
     if (!count) {
       return '删除分组「' + groupName + '」？组内没有收藏，删除不影响收藏内容。';
     }
-    return '删除分组「' + groupName + '」？组内 ' + count + ' 条收藏会移到「未分组」，不会丢失。';
+    return '删除分组「' + groupName + '」？组内 ' + count + ' 条收藏会移到「想去」，不会丢失。';
   }
 
   function showFavHint(kind, reason, info) {
@@ -938,6 +941,7 @@
       b.appendChild(el('span', 'n', String(counts[g.id] || 0)));
       b.addEventListener('click', () => {
         favActiveGroup = g.id;
+        favScope = 'group';   // chips = 单组过滤（默认「全部」时点组即切回当前组）
         favMovingId = null;
         clearFavHint();
         renderFavorites();
@@ -1114,9 +1118,8 @@
     let failed = null;
     for (let i = u.items.length - 1; i >= 0; i--) {
       const rec = u.items[i];
-      const r = await store.add(rec.item, { keepSavedAt: true });
+      const r = await store.add(rec.item, { keepSavedAt: true, groupId: rec.groupId || FAV_GROUP_DEFAULT });
       if (!r.ok) { failed = r; continue; }
-      if (rec.groupId && rec.groupId !== FAV_GROUP_DEFAULT) await store.move(rec.item.steleId, rec.groupId);
     }
     if (failed) showFavHint('warn', failed.reason, failed);
     await renderFavorites();
@@ -1149,13 +1152,17 @@
     const store = favStore();
     if (!store) return;
     const lib = await store.read();
-    const groups = (lib.groups && lib.groups.length) ? lib.groups : [{ id: FAV_GROUP_DEFAULT, name: '未分组', system: true }];
+    const groups = (lib.groups && lib.groups.length) ? lib.groups : [
+      { id: 'g-been', name: '已去', system: true, createdAt: 0 },
+      { id: 'g-want', name: '想去', system: true, createdAt: 1 },
+    ];
     favGroupsCache = groups;
-    if (!groups.some(g => g.id === favActiveGroup)) favActiveGroup = FAV_GROUP_DEFAULT;
+    if (!groups.some(g => g.id === favActiveGroup)) favActiveGroup = groups[0].id;
     const all = lib.items || [];
     const visible = filterFavorites(all, favQuery, favScope, favActiveGroup);
 
     renderFavChips(groups, groupCounts(all));
+    renderFavGroupMenuState();
     renderFavScope();
     renderFavHint();
 
@@ -1186,6 +1193,7 @@
   function openFavGroupMenu(open) {
     const menu = $('favMenu'), btn = $('favGroupMenuBtn');
     const show = open == null ? !(menu && !menu.hidden) : !!open;
+    if (show) renderFavGroupMenuState();
     if (menu) menu.hidden = !show;
     if (btn) btn.setAttribute('aria-expanded', String(show));
   }
@@ -1205,6 +1213,21 @@
 
   function currentGroupObj() {
     return favGroupsCache.find(g => g.id === favActiveGroup) || null;
+  }
+
+  /** 系统组（已去/想去）在组菜单里置灰：不能改名/删除，点击给解释文案。 */
+  function renderFavGroupMenuState() {
+    const g = currentGroupObj();
+    const sys = !!(g && g.system);
+    const tip = sys ? '「' + g.name + '」是系统分组，不能删除或改名。' : '';
+    [['favRenameGroup'], ['favDeleteGroup']].forEach(pair => {
+      const b = $(pair[0]);
+      if (!b) return;
+      b.classList.toggle('is-disabled', sys);
+      b.setAttribute('aria-disabled', String(sys));
+      if (tip) b.setAttribute('title', tip);
+      else b.removeAttribute('title');
+    });
   }
 
   async function submitFavGroup(which) {
@@ -1227,6 +1250,7 @@
     const store = favStore();
     if (!store) return;
     const group = currentGroupObj();
+    if (group && group.system) { showFavHint('warn', 'system-group', { groupName: group.name }); return; }
     const lib = await store.read();
     const items = (lib && Array.isArray(lib.items)) ? lib.items : [];
     const n = items.filter(x => x.groupId === favActiveGroup).length;
@@ -1323,8 +1347,16 @@
     document.addEventListener('keydown', ev => { if (ev.key === 'Escape') openFavGroupMenu(false); });
 
     if ($('favNewGroup')) $('favNewGroup').addEventListener('click', () => { openFavGroupMenu(false); showFavForm('new', true); });
-    if ($('favRenameGroup')) $('favRenameGroup').addEventListener('click', () => { openFavGroupMenu(false); showFavForm('rename', true); });
-    if ($('favDeleteGroup')) $('favDeleteGroup').addEventListener('click', () => { openFavGroupMenu(false); deleteCurrentGroup(); });
+    if ($('favRenameGroup')) $('favRenameGroup').addEventListener('click', () => {
+      const g = currentGroupObj();
+      if (g && g.system) { showFavHint('warn', 'system-group', { groupName: g.name }); return; }
+      openFavGroupMenu(false); showFavForm('rename', true);
+    });
+    if ($('favDeleteGroup')) $('favDeleteGroup').addEventListener('click', () => {
+      const g = currentGroupObj();
+      if (g && g.system) { showFavHint('warn', 'system-group', { groupName: g.name }); return; }
+      openFavGroupMenu(false); deleteCurrentGroup();
+    });
     if ($('favNewOk')) $('favNewOk').addEventListener('click', () => submitFavGroup('new'));
     if ($('favNewCancel')) $('favNewCancel').addEventListener('click', () => showFavForm('new', false));
     if ($('favRenameOk')) $('favRenameOk').addEventListener('click', () => submitFavGroup('rename'));
@@ -1439,6 +1471,7 @@
       activateTab, render: renderFavorites, setQuery: setFavQuery, setScope: setFavScope,
       filter: filterFavorites, groupCounts, buildDeepLink, buildSearchLink,
       setGroup: id => { favActiveGroup = id || FAV_GROUP_DEFAULT; return renderFavorites(); },
+      groupMenuState: renderFavGroupMenuState,
       undoAlive, undoText, openMenu: openFavGroupMenu, showForm: showFavForm, showHint: showFavHint, clearHint: clearFavHint,
       errorText: favErrorText, deleteGroupConfirmText,
       resetUi: () => { favMovingId = null; favHint = null; openFavGroupMenu(false); showFavForm('new', false); showFavForm('rename', false); },

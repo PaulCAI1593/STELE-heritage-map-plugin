@@ -841,6 +841,7 @@
 
   function favoriteErrorText(res) {
     if (!res) return '收藏失败，请重试';
+    if (res.reason === 'need-group') return '请选择分组后再收藏';
     if (res.reason === 'limit') return '收藏夹已满（上限 500 条），请先在弹窗中整理';
     if (res.reason === 'size') return '收藏数据过大（超过 1MB），请先导出后清理';
     if (res.reason === 'schema') return '收藏数据版本不兼容，已停止写入以保护原数据';
@@ -848,49 +849,100 @@
     return '收藏失败，请重试';
   }
 
-  /** 命中态操作区：「收藏 / 已收藏 ✓」开关（不是链接，点击不跳页、不重查）。 */
+  /**
+   * 命中态操作区（#39）：未收藏点「收藏」→ 原位展开「已去 / 想去 / 取消」，选完才写库；
+   * 已收藏点按钮 = 取消收藏（现有行为）。外部写入把状态改成未收藏时，展开态一并收起。
+   */
   function buildFavoriteRow(state) {
     const store = window.HMP && window.HMP.favoritesStore;
     if (!store || !state.steleId) return null;
     const row = el('div', { className: 'hmp-fav-row' });
     const note = el('span', { className: 'hmp-fav-note', role: 'status', 'aria-live': 'polite' });
     let saved = state.favorited === true;
+    let choosing = false;
+    let busy = false;
     const label = () => (saved ? '已收藏 ✓' : '收藏');
     const btn = el('button', {
       type: 'button', className: 'hmp-btn hmp-fav-btn',
       'aria-pressed': saved ? 'true' : 'false',
       'aria-label': saved ? '取消收藏' : '收藏该点位',
     }, label());
+    const say = text => { note.textContent = text || ''; };
+    const choose = el('div', { className: 'hmp-fav-choose', role: 'group', 'aria-label': '选择分组' });
+    const collapse = () => {
+      if (!choosing) return;
+      choosing = false;
+      if (choose.parentNode) choose.parentNode.removeChild(choose);
+      btn.hidden = false;
+      row.setAttribute('data-choosing', 'false');
+    };
     const setSaved = v => {
       saved = v;
+      collapse();
       btn.textContent = label();
       btn.setAttribute('aria-pressed', saved ? 'true' : 'false');
       btn.setAttribute('aria-label', saved ? '取消收藏' : '收藏该点位');
     };
-    const say = text => { note.textContent = text || ''; };
+    const pick = async (gid, groupName) => {
+      if (busy) return;
+      busy = true;
+      say('');
+      try {
+        const res = await store.add(favoriteSnapshot(state), { groupId: gid });
+        if (res && res.ok) { setSaved(true); say('已收藏到「' + groupName + '」'); }
+        else if (res && res.reason === 'duplicate') {
+          setSaved(true);
+          say('已在收藏夹（' + (res.groupName || '收藏') + '）');
+        } else {
+          say(favoriteErrorText(res));
+        }
+      } catch (e) {
+        say('收藏失败，请重试');
+      }
+      busy = false;
+    };
+    [['g-been', '已去'], ['g-want', '想去']].forEach(pair => {
+      const b = el('button', {
+        type: 'button', className: 'hmp-btn hmp-fav-pick', 'data-group': pair[0],
+      }, pair[1]);
+      b.addEventListener('click', () => pick(pair[0], pair[1]));
+      choose.appendChild(b);
+    });
+    const cancel = el('button', { type: 'button', className: 'hmp-btn hmp-fav-cancel' }, '取消');
+    cancel.addEventListener('click', () => {
+      collapse();
+      if (btn.focus) btn.focus();
+    });
+    choose.appendChild(cancel);
+    const expand = () => {
+      if (choosing || saved) return;
+      choosing = true;
+      btn.hidden = true;
+      row.setAttribute('data-choosing', 'true');
+      row.appendChild(choose);
+      const first = choose.firstChild;
+      if (first && first.focus) first.focus();
+    };
     btn.addEventListener('click', async () => {
       if (btn.disabled) return;
+      if (!saved) { expand(); return; }
       btn.disabled = true;
       say('');
       try {
-        if (saved) {
-          const res = await store.remove(state.steleId);
-          if (res && res.ok) setSaved(false);
-          else say(favoriteErrorText(res));
-        } else {
-          const res = await store.add(favoriteSnapshot(state));
-          if (res && res.ok) setSaved(true);
-          else if (res && res.reason === 'duplicate') {
-            setSaved(true);
-            say('已在收藏夹（' + (res.groupName || '未分组') + '）');
-          } else {
-            say(favoriteErrorText(res));
-          }
-        }
+        const res = await store.remove(state.steleId);
+        if (res && res.ok) setSaved(false);
+        else say(favoriteErrorText(res));
       } catch (e) {
         say('收藏失败，请重试');
       } finally {
         btn.disabled = false;
+      }
+    });
+    row.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape' && choosing) {
+        ev.stopPropagation();
+        collapse();
+        if (btn.focus) btn.focus();
       }
     });
     row.appendChild(btn);
