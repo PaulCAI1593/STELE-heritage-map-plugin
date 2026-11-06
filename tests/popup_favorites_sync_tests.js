@@ -228,6 +228,9 @@ function lib(items) {
     check('初始空库：列表为空、空态可见',
       H.els.favList.children.length === 0 && H.els.favEmpty.hidden === false,
       'children=' + H.els.favList.children.length + ' emptyHidden=' + H.els.favEmpty.hidden);
+    check('#48 空态不显示「去配置 Key」：按钮 hidden 且文案无 Key 字样',
+      H.els.favEmptyGo.hidden === true && String(H.els.favEmptyGo.textContent || '').indexOf('Key') === -1,
+      'hidden=' + H.els.favEmptyGo.hidden + ' text=' + H.els.favEmptyGo.textContent);
 
     // 卡片侧收藏一条 → 真实写 storage（桩派发 onChanged）→ 弹窗列表出现该条
     chrome.storage.local.set({ [FKEY]: lib([
@@ -241,6 +244,20 @@ function lib(items) {
       H.els.favChips.children.some(b => b.attrs['data-g'] === 'g-been' &&
         b.children.some(c => c.className === 'n' && c.textContent === '1')),
       'chips=' + H.els.favChips.children.length);
+
+    // #48 分组空态：仍显示「查看全部收藏」，点击切到全部
+    H.popup.favorites.setGroup('g-want');
+    H.popup.favorites.setScope('group');
+    await sleep(10);
+    check('#48 分组空态：显示「查看全部收藏」按钮',
+      H.els.favEmpty.hidden === false && H.els.favEmptyGo.hidden === false &&
+      H.els.favEmptyGo.textContent === '查看全部收藏',
+      'hidden=' + H.els.favEmptyGo.hidden + ' text=' + H.els.favEmptyGo.textContent);
+    H.els.favEmptyGo.click();
+    await sleep(10);
+    check('#48 点「查看全部收藏」切到全部并显示条目',
+      H.popup.favorites.state().scope === 'all' && H.els.favList.children.length === 1,
+      'scope=' + H.popup.favorites.state().scope + ' children=' + H.els.favList.children.length);
 
     // 卡片侧取消收藏 → 列表回到空态
     chrome.storage.local.set({ [FKEY]: lib([]) });
@@ -461,6 +478,21 @@ function lib(items) {
     };
     walk(SRC);
     check('#47 src/ 运行时代码无 https://stele.geogv.org', bad.length === 0, 'files=' + JSON.stringify(bad));
+  }
+
+  console.log('\n=== #48 收藏空态与 Key 配置解耦 ===');
+  {
+    const hits = [];
+    const walk = dir => {
+      fs.readdirSync(dir, { withFileTypes: true }).forEach(d => {
+        const f = path.join(dir, d.name);
+        if (d.isDirectory()) walk(f);
+        else if (/\.(js|json|html|css)$/.test(d.name) && fs.readFileSync(f, 'utf8').indexOf('去配置 Key') !== -1) hits.push(path.relative(SRC, f));
+      });
+    };
+    walk(SRC);
+    check('#48 src/ 无「去配置 Key」字面量', hits.length === 0, 'files=' + JSON.stringify(hits));
+    check('#48 空态按钮初始 hidden 且中性文案', /id="favEmptyGo"[^>]*hidden[^>]*>查看全部收藏</.test(popupHtml));
   }
 
   finish();

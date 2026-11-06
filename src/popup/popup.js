@@ -1162,7 +1162,8 @@
       show = true;
       if (title) title.textContent = '还没有收藏';
       if (body) body.textContent = '在地图详情页打开一个点位，点卡片上的「收藏」即可保存到这里。';
-      if (go) { go.hidden = false; go.textContent = '去配置 Key'; }
+      // #48：空态不引导配置 Key（收藏与 Key 配置解耦）；按钮默认隐藏，文案留给分组空态。
+      if (go) go.hidden = true;
       if (clear) clear.hidden = true;
     } else if (favQuery.trim() && !visible.length) {
       show = true;
