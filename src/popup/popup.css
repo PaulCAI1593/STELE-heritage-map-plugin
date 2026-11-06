@@ -5,7 +5,7 @@ html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 
 /* ---- 弹窗骨架（两主题完全一致，只换变量与材质层） ---- */
-.popup{width:100%;background-color:var(--hmp-surface);border-top:1px solid var(--hmp-border);
+.popup{display:flex;flex-direction:column;width:100%;background-color:var(--hmp-surface);border-top:1px solid var(--hmp-border);
   border-bottom:1px solid var(--hmp-border);border-radius:var(--hmp-r);
   box-shadow:var(--hmp-shadow)}
 .ph{display:flex;align-items:flex-start;gap:10px;padding:5px 12px 4px;position:relative}
@@ -133,7 +133,7 @@ html[data-hmp-window="1"] .hmp-popout{display:none}
 .upd-btn:hover{color:var(--hmp-primary-h)}
 .upd-btn:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px;border-radius:2px}
 .upd-btn[disabled]{color:var(--hmp-muted);cursor:default;text-decoration:none}
-.hmp-foot{margin:0 12px 12px;font-size:12px;line-height:1.4;color:var(--hmp-muted);position:sticky;bottom:0;background:var(--hmp-page);padding-top:2px}
+.hmp-foot{margin:0 12px 12px;font-size:12px;line-height:1.4;color:var(--hmp-muted)}
 
 @media (prefers-reduced-motion:reduce){.spin{animation:none}*{transition:none!important}}
 @media (max-width:359px){.band{flex-wrap:wrap}.band-m{max-width:100%;text-align:left}}
@@ -237,7 +237,10 @@ html[data-hmp-window="1"],html[data-hmp-window="1"] body{width:100%}
 .upd-install b{color:var(--hmp-text);font-weight:600}
 
 /* ===== #32b 收藏页 UI（token 与设计说明 §2 一致，颜色全走变量） ===== */
+.ppanel{flex:0 0 auto}
 .ppanel[hidden]{display:none!important}
+/* #49：两页共用页脚，内容短贴底、内容长随文档下移（非 sticky/fixed） */
+.pfoot{margin-top:auto;flex:0 0 auto;padding-top:8px}
 .ptabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--hmp-line-soft)}
 .ptab{min-height:40px;padding:0 14px;font:600 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--hmp-muted);background:transparent;border:0;cursor:pointer;transition:color .15s}
 .ptab:hover{color:var(--hmp-text)}

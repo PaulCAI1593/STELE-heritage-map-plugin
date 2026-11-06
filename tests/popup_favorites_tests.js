@@ -40,6 +40,23 @@ check('popup.html：撤销条位于搜索栏下、分组 chips 上（#32c，设�
   /class="undo"[^>]*id="favUndo"/.test(html) &&
   /id="favUndoBtn"[^>]*>撤销</.test(html));
 
+check('#49 页脚两页共用：只有一份、位于两个 panel 之后',
+  (html.match(/class="hmp-foot"/g) || []).length === 1 &&
+  (html.match(/id="updWrap"/g) || []).length === 1 &&
+  (html.match(/id="updLinks"/g) || []).length === 1 &&
+  (html.match(/id="updInstall"/g) || []).length === 1 &&
+  html.indexOf('<footer class="pfoot">') > html.indexOf('id="panel-set"') &&
+  html.indexOf('</footer>') < html.indexOf('</main>'));
+
+check('#49 页脚 id 全部保留（ver/updMsg/checkUpdate/dlMain/dlSrc）',
+  ['ver', 'updMsg', 'checkUpdate', 'dlMain', 'dlSrc'].every(id => html.indexOf('id="' + id + '"') >= 0));
+
+check('#49 CSS：.popup 列布局 / .pfoot 贴底 / .hmp-foot 不再 sticky',
+  /\.popup\{[^}]*display:flex;flex-direction:column/.test(css) &&
+  /\.ppanel\{flex:0 0 auto\}/.test(css) &&
+  /\.pfoot\{margin-top:auto;flex:0 0 auto;padding-top:8px\}/.test(css) &&
+  !/\.hmp-foot\{[^}]*position:sticky/.test(css));
+
 check('popup.html：三种空态与提示带都有独立节点',
   /id="favEmptyTitle"/.test(html) && /id="favEmptyBody"/.test(html) &&
   /id="favEmptyGo"/.test(html) && /id="favEmptyClear"/.test(html) &&

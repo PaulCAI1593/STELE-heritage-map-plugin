@@ -94,7 +94,8 @@ check('不再有 @media (min-width:400px)', !/@media\s*\(min-width:\s*400px\)/.t
 check('.popup 用 min-height:0', /\.popup\{min-height:0/.test(css));
 check('没有 !important 叠宽度档', !/width:[^;]*!important/.test(css));
 // 长内容不变量：sticky 底栏（#12 §五-3），前提是 .popup 不再裁切子元素
-check('.hmp-foot 用 position:sticky + bottom:0', /\.hmp-foot\{[^}]*position:sticky[^}]*bottom:0/.test(css));
+check('#49 页脚贴底改用 .pfoot{margin-top:auto}（不再 sticky，避免遮列表）',
+  /\.pfoot\{[^}]*margin-top:auto/.test(css) && !/\.hmp-foot\{[^}]*position:sticky/.test(css));
 check('.popup 已去掉 overflow:hidden（否则 sticky 不生效）', !/\.popup\{[^}]*overflow:hidden/.test(css));
 check('未引入 scrollbar-gutter（sticky 单方案，避免预留槽压缩档位宽度）', !css.includes('scrollbar-gutter'));
 {
