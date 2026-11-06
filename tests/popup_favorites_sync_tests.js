@@ -317,7 +317,7 @@ function lib(items) {
     await sleep(30);
     return H.els.favList.children[0].children[0];
   };
-  const DEEP = 'https://stele.geogv.org/zhcn/geo/abc123';
+  const DEEP = 'http://stele.geogv.org/zhcn/geo/abc123';
 
   {
     const H = build({ store: { hmpTheme: 'paper' }, getCurrentId: 99 });
@@ -445,6 +445,22 @@ function lib(items) {
       /id="popoutBtn"[^>]*aria-label="弹出到新窗口"[^>]*title="弹出到新窗口"/.test(popupHtml) &&
       popupHtml.indexOf('class="hmp-popout"') !== -1 && popupHtml.indexOf('<svg') !== -1,
       'html ok');
+  }
+
+  console.log('\n=== #47 深链只走 http ===');
+  {
+    check('#47 buildDeepLink 以 http 开头', /^http:\/\/stele\.geogv\.org\/zhcn\/geo\//.test(global.HMP.popup.favorites.buildDeepLink('abc')));
+    check('#47 buildSearchLink 以 http 开头', /^http:\/\/stele\.geogv\.org\/zhcn\/search\?keyword=/.test(global.HMP.popup.favorites.buildSearchLink('十里庙')));
+    const bad = [];
+    const walk = dir => {
+      fs.readdirSync(dir, { withFileTypes: true }).forEach(d => {
+        const f = path.join(dir, d.name);
+        if (d.isDirectory()) walk(f);
+        else if (/\.(js|json|html|css)$/.test(d.name) && fs.readFileSync(f, 'utf8').indexOf('https://stele.geogv.org') !== -1) bad.push(path.relative(SRC, f));
+      });
+    };
+    walk(SRC);
+    check('#47 src/ 运行时代码无 https://stele.geogv.org', bad.length === 0, 'files=' + JSON.stringify(bad));
   }
 
   finish();

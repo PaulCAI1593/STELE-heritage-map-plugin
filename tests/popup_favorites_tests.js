@@ -64,7 +64,8 @@ check('popup.js：默认收藏页 + 搜索 debounce 150 + 撤销 5000',
   /activateTab\('fav', false\)/.test(js));
 
 check('popup.js：深链单一出口与高德/百度/复制名称',
-  /https:\/\/stele\.geogv\.org\/zhcn\/geo\//.test(js) &&
+  /http:\/\/stele\.geogv\.org\/zhcn\/geo\//.test(js) &&
+  js.indexOf('https://stele.geogv.org') === -1 &&
   /zhcn\/search\?keyword=/.test(js) &&
   /amapUrlOf/.test(js) && /baiduUrlOf/.test(js) && /copyFavoriteName/.test(js));
 
@@ -131,12 +132,12 @@ check('filterFavorites：tier 不参与搜索',
 check('groupCounts：按组计数（含 0 不出现）',
   JSON.stringify(pure.groupCounts(items)) === JSON.stringify({ 'g-been': 1, 'g-trip': 2 }));
 
-check('buildDeepLink：/zhcn/geo/<id> 单一出口、空 id 返回空串',
+check('#47 buildDeepLink：http /zhcn/geo/<id> 单一出口、空 id 返回空串',
   pure.buildDeepLink('82e35243f19442eb8b66416a38f6f0b4') ===
-    'https://stele.geogv.org/zhcn/geo/82e35243f19442eb8b66416a38f6f0b4' &&
+    'http://stele.geogv.org/zhcn/geo/82e35243f19442eb8b66416a38f6f0b4' &&
   pure.buildDeepLink('') === '' && pure.buildDeepLink(null) === '');
 
-check('buildSearchLink：name 编码兜底', /^https:\/\/stele\.geogv\.org\/zhcn\/search\?keyword=/.test(pure.buildSearchLink('十里庙遗址')));
+check('#47 buildSearchLink：http 兜底、name 编码', /^http:\/\/stele\.geogv\.org\/zhcn\/search\?keyword=/.test(pure.buildSearchLink('十里庙遗址')));
 
 check('undoAlive：边界 now < expiresAt 才有效',
   pure.undoAlive({ expiresAt: 100 }, 99) === true &&

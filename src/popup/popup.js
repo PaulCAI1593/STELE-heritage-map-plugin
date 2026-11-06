@@ -788,13 +788,14 @@
     return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' 收藏';
   }
 
-  /** D-115：深链单一出口；拿不到 id 时退化为站内搜索（调用方决定） */
+  /** D-115：深链单一出口；拿不到 id 时退化为站内搜索（调用方决定）
+   *  #47：stele.geogv.org 只支持 http（https 连接 12s 超时、页面空白），因此这里必须用 http。 */
   function buildDeepLink(steleId) {
-    return steleId ? 'https://stele.geogv.org/zhcn/geo/' + encodeURIComponent(steleId) : '';
+    return steleId ? 'http://stele.geogv.org/zhcn/geo/' + encodeURIComponent(steleId) : '';
   }
 
   function buildSearchLink(name) {
-    return 'https://stele.geogv.org/zhcn/search?keyword=' + encodeURIComponent(name || '');
+    return 'http://stele.geogv.org/zhcn/search?keyword=' + encodeURIComponent(name || '');
   }
 
   function openExternal(url) {
