@@ -201,6 +201,26 @@ check('popup.js：订阅 chrome.storage.onChanged 刷新收藏页（P2-2）',
   /reason === 'limit-groups'/.test(js));
 
 
+// ---------- #41：卡片收藏控件在头部右上角（静态结构/CSS）----------
+const cardJs = fs.readFileSync(path.join(root, 'src/content/card.js'), 'utf8');
+const contentCss = fs.readFileSync(path.join(root, 'src/content/content.css'), 'utf8');
+
+check('#41：headRight 注入 .hmp-st-head，正文底部不再 push 收藏节点',
+  /if \(o\.headRight\) head\.appendChild\(o\.headRight\)/.test(cardJs) &&
+  /headRight: buildFavoriteHeadRight\(state\)/.test(cardJs) &&
+  !/children\.push\(buildFavoriteRow\(state\)\)/.test(cardJs));
+
+check('#41：收藏控件右对齐、菜单绝对定位（不推布局）',
+  /\.hmp-fav-ctl \{[^}]*position: relative/.test(contentCss) &&
+  /\.hmp-fav-wrap \{[^}]*margin-left: auto/.test(contentCss) &&
+  /\.hmp-fav-menu \{[^}]*position: absolute/.test(contentCss) &&
+  /\.hmp-fav-ctl \.hmp-btn \{[^}]*min-height: 32px/.test(contentCss));
+
+check('#41：旧正文底部收藏样式已移除，chip 有独立样式',
+  contentCss.indexOf('.hmp-fav-row') < 0 && contentCss.indexOf('.hmp-fav-choose') < 0 &&
+  /\.hmp-fav-chip \{[^}]*font: 12px/.test(contentCss));
+
+
 // ---------- 数据层配合：撤销恢复原 savedAt、删组不丢 ----------
 env.setup({});
 env.load('shared/favorites-store.js');

@@ -28,8 +28,16 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-bottom: 5px;
+}
+
+/* #41：标题过长时省略；头部右侧动作不被压缩 */
+#hmp-opening-card .hmp-st-head .poi-section-title.hmp-st-word {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 状态词＝站点 .poi-section-title 的观感（灰蓝小标题），不是彩色徽章 */
@@ -201,19 +209,95 @@
 
 #hmp-opening-card .hmp-btn:hover { background: #35507a; }
 
-/* ===== #32a 收藏开关（命中态操作区） ===== */
-#hmp-opening-card .hmp-fav-row {
+/* ===== #41 收藏控件（卡片头部右上角） ===== */
+#hmp-opening-card .hmp-fav-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+#hmp-opening-card .hmp-fav-ctl {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin-top: 8px;
+  gap: 6px;
+  position: relative;
+}
+
+/* 已收藏：左侧分组 chip（静态，不点不改组） */
+#hmp-opening-card .hmp-fav-chip {
+  display: inline-block;
+  font: 12px/1 'Open Sans', 'Helvetica Neue', Arial, sans-serif,
+        'Microsoft YaHei New', 'Microsoft YaHei', STXihei;
+  padding: 5px 7px;
+  color: #3f5d8a;
+  background: #eef3fa;
+  border: 1px solid #c8d6e8;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+#hmp-opening-card .hmp-fav-chip[hidden] { display: none; }
+
+#hmp-opening-card .hmp-fav-ctl .hmp-btn {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 7px 13px;
+}
+
+/* 视觉高 32，触控区扩到 40（上下各 4px） */
+#hmp-opening-card .hmp-fav-ctl .hmp-btn::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+
+/* 分组菜单：绝对定位悬浮在按钮下方，不推卡片布局 */
+#hmp-opening-card .hmp-fav-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  padding: 4px 0;
+  background: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .12);
+}
+
+#hmp-opening-card .hmp-fav-menu .hmp-fav-pick,
+#hmp-opening-card .hmp-fav-menu .hmp-fav-cancel {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px;
+  font: 13px/36px 'Open Sans', 'Helvetica Neue', Arial, sans-serif,
+        'Microsoft YaHei New', 'Microsoft YaHei', STXihei;
+  text-align: left;
+  color: #212529;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+#hmp-opening-card .hmp-fav-menu .hmp-fav-pick:hover,
+#hmp-opening-card .hmp-fav-menu .hmp-fav-pick:focus,
+#hmp-opening-card .hmp-fav-menu .hmp-fav-cancel:hover,
+#hmp-opening-card .hmp-fav-menu .hmp-fav-cancel:focus {
+  background: #f1f3f5;
 }
 
 #hmp-opening-card .hmp-fav-note {
+  margin-top: 2px;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.4;
   color: #a3261b;
+  text-align: right;
 }
 
 #hmp-opening-card .hmp-fav-note:empty { display: none; }
@@ -282,24 +366,4 @@
 
 @media (prefers-reduced-motion: reduce) {
   #hmp-opening-card * { transition: none !important; animation: none !important; }
-}
-
-/* ===== #39 收藏二选一（已去 / 想去 / 取消） ===== */
-#hmp-opening-card .hmp-fav-choose {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-#hmp-opening-card .hmp-fav-choose .hmp-btn {
-  min-height: 40px;
-  min-width: 44px;
-  padding: 8px 14px;
-}
-
-#hmp-opening-card .hmp-fav-choose .hmp-fav-cancel {
-  color: #3f5d8a;
-  background: #ffffff;
-  border-color: #c8d2e0;
 }

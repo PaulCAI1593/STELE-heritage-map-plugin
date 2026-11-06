@@ -133,6 +133,8 @@
     head.appendChild(el('h6', { className: 'poi-section-title hmp-st-word' },
       o.word || STATE_WORDS[state.kind] || '开放信息'));
     if (o.badge) head.appendChild(el('span', { className: 'hmp-badge' }, o.badge));
+    // #41：卡片级动作（收藏控件）放头部右侧，与开放信息正文分开。
+    if (o.headRight) head.appendChild(o.headRight);
     st.appendChild(head);
 
     for (const c of bodyChildren) if (c) st.appendChild(c);
@@ -408,11 +410,13 @@
     }
 
     children.push(buildFallbackLinks(state.amapSearchUrl, state.baiduSearchUrl));
-    // #32a：收藏开关（仅命中态；没有 steleId 时返回 null，不显示）
-    children.push(buildFavoriteRow(state));
     children.push(buildFoot(state));
+    // #41：收藏控件从正文底部移到卡片头部右上角（与「开放时间·票价·地址」分开）。
     return buildSection(state, children,
-      { visual: 'found', word: '已匹配', role: 'region', ariaLabel: '开放信息' });
+      {
+        visual: 'found', word: '已匹配', role: 'region', ariaLabel: '开放信息',
+        headRight: buildFavoriteHeadRight(state),
+      });
   }
 
   /**
@@ -850,82 +854,107 @@
   }
 
   /**
-   * 命中态操作区（#39）：未收藏点「收藏」→ 原位展开「已去 / 想去 / 取消」，选完才写库；
-   * 已收藏点按钮 = 取消收藏（现有行为）。外部写入把状态改成未收藏时，展开态一并收起。
+   * 命中态头部右上角收藏控件（#41）：
+   * 未收藏＝单个「收藏」按钮，点击在按钮下方浮出「已去 / 想去 / 取消」菜单
+   * （绝对定位，不推卡片布局；Esc / 点菜单外关闭并回焦按钮）；
+   * 已收藏＝左分组 chip + 右「取消收藏」按钮。外部写入同步 chip 与按钮。
    */
-  function buildFavoriteRow(state) {
+  function buildFavoriteHeadRight(state) {
     const store = window.HMP && window.HMP.favoritesStore;
     if (!store || !state.steleId) return null;
-    const row = el('div', { className: 'hmp-fav-row' });
-    const note = el('span', { className: 'hmp-fav-note', role: 'status', 'aria-live': 'polite' });
+    const wrap = el('div', { className: 'hmp-fav-wrap' });
+    const ctl = el('div', { className: 'hmp-fav-ctl' });
+    const chip = el('span', { className: 'hmp-fav-chip' });
+    chip.hidden = true;
+    const note = el('span', {
+      className: 'hmp-fav-note', role: 'status', 'aria-live': 'polite',
+    });
     let saved = state.favorited === true;
+    let groupName = state.favoriteGroup || '';
     let choosing = false;
     let busy = false;
-    const label = () => (saved ? '已收藏 ✓' : '收藏');
+    let noteTimer = null;
+    const say = text => {
+      note.textContent = text || '';
+      if (noteTimer) { clearTimeout(noteTimer); noteTimer = null; }
+      if (text && typeof setTimeout === 'function') {
+        noteTimer = setTimeout(() => {
+          note.textContent = '';
+          noteTimer = null;
+        }, 4000);
+        if (noteTimer && typeof noteTimer.unref === 'function') noteTimer.unref();
+      }
+    };
     const btn = el('button', {
       type: 'button', className: 'hmp-btn hmp-fav-btn',
-      'aria-pressed': saved ? 'true' : 'false',
-      'aria-label': saved ? '取消收藏' : '收藏该点位',
-    }, label());
-    const say = text => { note.textContent = text || ''; };
-    const choose = el('div', { className: 'hmp-fav-choose', role: 'group', 'aria-label': '选择分组' });
-    const collapse = () => {
-      if (!choosing) return;
-      choosing = false;
-      if (choose.parentNode) choose.parentNode.removeChild(choose);
-      btn.hidden = false;
-      row.setAttribute('data-choosing', 'false');
+      'aria-haspopup': 'menu', 'aria-expanded': 'false',
+    });
+    const menu = el('div', {
+      className: 'hmp-fav-menu', role: 'menu', 'aria-label': '选择收藏分组',
+    });
+    const items = [];
+    const makeItem = (cls, group, label) => {
+      const b = el('button', {
+        type: 'button', className: cls, role: 'menuitem', 'data-group': group,
+      }, label);
+      menu.appendChild(b);
+      items.push(b);
+      return b;
     };
-    const setSaved = v => {
-      saved = v;
-      collapse();
-      btn.textContent = label();
+    makeItem('hmp-fav-pick', 'g-been', '已去');
+    makeItem('hmp-fav-pick', 'g-want', '想去');
+    const cancel = makeItem('hmp-fav-cancel', '', '取消');
+    const render = () => {
+      chip.hidden = !saved;
+      chip.textContent = saved ? (groupName || '收藏') : '';
+      chip.setAttribute('title', saved ? '收藏分组：' + (groupName || '收藏') : '');
+      btn.textContent = saved ? '取消收藏' : '收藏';
       btn.setAttribute('aria-pressed', saved ? 'true' : 'false');
       btn.setAttribute('aria-label', saved ? '取消收藏' : '收藏该点位');
     };
-    const pick = async (gid, groupName) => {
+    const closeMenu = focusBtn => {
+      if (!choosing) return;
+      choosing = false;
+      if (menu.parentNode) menu.parentNode.removeChild(menu);
+      btn.setAttribute('aria-expanded', 'false');
+      if (focusBtn && btn.focus) btn.focus();
+    };
+    const openMenu = () => {
+      if (choosing || saved || busy) return;
+      choosing = true;
+      ctl.appendChild(menu);
+      btn.setAttribute('aria-expanded', 'true');
+      if (items[0] && items[0].focus) items[0].focus();
+    };
+    const setSaved = (v, name) => {
+      saved = !!v;
+      if (saved && typeof name === 'string' && name) groupName = name;
+      if (!saved) groupName = '';
+      closeMenu(false);
+      render();
+    };
+    const pick = async (gid, label) => {
       if (busy) return;
       busy = true;
       say('');
+      closeMenu(false);
       try {
         const res = await store.add(favoriteSnapshot(state), { groupId: gid });
-        if (res && res.ok) { setSaved(true); say('已收藏到「' + groupName + '」'); }
-        else if (res && res.reason === 'duplicate') {
-          setSaved(true);
-          say('已在收藏夹（' + (res.groupName || '收藏') + '）');
-        } else {
-          say(favoriteErrorText(res));
-        }
+        if (res && res.ok) setSaved(true, label);
+        else if (res && res.reason === 'duplicate') setSaved(true, res.groupName || label);
+        else say(favoriteErrorText(res));
       } catch (e) {
         say('收藏失败，请重试');
       }
       busy = false;
     };
-    [['g-been', '已去'], ['g-want', '想去']].forEach(pair => {
-      const b = el('button', {
-        type: 'button', className: 'hmp-btn hmp-fav-pick', 'data-group': pair[0],
-      }, pair[1]);
-      b.addEventListener('click', () => pick(pair[0], pair[1]));
-      choose.appendChild(b);
-    });
-    const cancel = el('button', { type: 'button', className: 'hmp-btn hmp-fav-cancel' }, '取消');
-    cancel.addEventListener('click', () => {
-      collapse();
-      if (btn.focus) btn.focus();
-    });
-    choose.appendChild(cancel);
-    const expand = () => {
-      if (choosing || saved) return;
-      choosing = true;
-      btn.hidden = true;
-      row.setAttribute('data-choosing', 'true');
-      row.appendChild(choose);
-      const first = choose.firstChild;
-      if (first && first.focus) first.focus();
-    };
+    items[0].addEventListener('click', () => pick('g-been', '已去'));
+    items[1].addEventListener('click', () => pick('g-want', '想去'));
+    cancel.addEventListener('click', () => { closeMenu(true); });
     btn.addEventListener('click', async () => {
-      if (btn.disabled) return;
-      if (!saved) { expand(); return; }
+      if (btn.disabled || busy) return;
+      if (!saved) { openMenu(); return; }
+      busy = true;
       btn.disabled = true;
       say('');
       try {
@@ -934,38 +963,54 @@
         else say(favoriteErrorText(res));
       } catch (e) {
         say('收藏失败，请重试');
-      } finally {
-        btn.disabled = false;
       }
+      btn.disabled = false;
+      busy = false;
     });
-    row.addEventListener('keydown', ev => {
+    ctl.addEventListener('keydown', ev => {
       if (ev.key === 'Escape' && choosing) {
         ev.stopPropagation();
-        collapse();
-        if (btn.focus) btn.focus();
+        closeMenu(true);
       }
     });
-    row.appendChild(btn);
-    row.appendChild(note);
-    favRowRefs.push({ el: row, steleId: state.steleId, setSaved });
-    return row;
+    // 点菜单外关闭并回焦按钮；单测桩没有 document.addEventListener 时跳过。
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('click', ev => {
+        if (!choosing) return;
+        let node = ev && ev.target;
+        while (node) {
+          if (node === ctl) return;
+          node = node.parentNode || null;
+        }
+        closeMenu(true);
+      }, true);
+    }
+    ctl.appendChild(chip);
+    ctl.appendChild(btn);
+    wrap.appendChild(ctl);
+    wrap.appendChild(note);
+    render();
+    favRowRefs.push({ el: wrap, steleId: state.steleId, setSaved });
+    return wrap;
   }
 
-  /** 收藏库快照 → 已收藏 id 集合（容忍 null / 旧版无 items）。 */
-  function favoriteIdSet(newValue) {
-    const ids = new Set();
-    const items = newValue && Array.isArray(newValue.items) ? newValue.items : [];
-    items.forEach(it => { if (it && it.steleId != null) ids.add(String(it.steleId)); });
-    return ids;
+  /** 收藏库快照 → 该 steleId 的条目（含所在组名）；无则 null。 */
+  function favoriteEntryOf(newValue, steleId) {
+    const items = (newValue && Array.isArray(newValue.items)) ? newValue.items : [];
+    const it = items.find(x => x && x.steleId != null && String(x.steleId) === String(steleId));
+    if (!it) return null;
+    const groups = (newValue && Array.isArray(newValue.groups)) ? newValue.groups : [];
+    const g = groups.find(x => x && x.id === it.groupId);
+    return { groupName: (g && g.name) || it.groupName || '收藏', groupId: it.groupId || '' };
   }
 
-  /** 把最新收藏库刷到已渲染卡片的按钮上（只改按钮态，不动卡片其它内容）。 */
+  /** 把最新收藏库刷到已渲染卡片的头部控件上（只改 chip/按钮态，不动卡片其它内容）。 */
   function refreshFavoriteRows(newValue) {
-    const ids = favoriteIdSet(newValue);
     for (let i = favRowRefs.length - 1; i >= 0; i--) {
       const ref = favRowRefs[i];
       if (!ref || !ref.el || ref.el.isConnected === false) { favRowRefs.splice(i, 1); continue; }
-      ref.setSaved(ids.has(String(ref.steleId)));
+      const entry = favoriteEntryOf(newValue, ref.steleId);
+      ref.setSaved(!!entry, entry && entry.groupName);
     }
   }
 
@@ -2365,6 +2410,18 @@
     const steleId = currentSteleId();
     const store = window.HMP && window.HMP.favoritesStore;
     const favorited = (steleId && store) ? await store.isSaved(steleId) : false;
+    // #41：首帧就带分组名，直接显示「已去 / 取消收藏」，不闪「收藏」。
+    let favoriteGroup = '';
+    if (favorited) {
+      try {
+        const lib = await store.read();
+        const items = (lib && Array.isArray(lib.items)) ? lib.items : [];
+        const it = items.find(x => x && String(x.steleId) === String(steleId));
+        const groups = (lib && Array.isArray(lib.groups)) ? lib.groups : [];
+        const g = it ? groups.find(x => x && x.id === it.groupId) : null;
+        favoriteGroup = (g && g.name) || (it && it.groupName) || '';
+      } catch (e) { /* 分组名失败不影响收藏态 */ }
+    }
 
     if (cacheData.matched) {
       const provider = cacheData.provider;
@@ -2378,6 +2435,7 @@
         matchDist: cacheData.dist || null,
         steleId,
         favorited,
+        favoriteGroup,
         tier: poi.tier || null,
         siteAddress: poi.address || '',
         admin: poi.admin || [],
@@ -2732,7 +2790,7 @@
     // #32a：收藏夹（卡片侧）
     currentSteleId,
     favoriteSnapshot,
-    buildFavoriteRow,
+    buildFavoriteHeadRight,
     refreshFavoriteRows,
     NEARBY_RADIUS,
     NAME_STRONG_SIM
