@@ -1,0 +1,407 @@
+// content/map-filter.js — #61 地图「只显示收藏」（isolated world）
+//
+// 在 STELE 地图右下角（图例按钮上方）加一个控件：点按钮进入「只显示收藏」并展开分组面板，
+// 每个分组一个开关；再点按钮还原。过滤执行在 MAIN world 的 map-bridge.js（CustomEvent 通信）。
+// 只读收藏数据，不改 schema、不持久化过滤模式。
+(function () {
+  'use strict';
+  if (window.__HMP_MAP_FILTER_LOADED__) return;
+  window.__HMP_MAP_FILTER_LOADED__ = true;
+
+  var KEY = 'hmp:favorites:v1';
+  var CMD_EVENT = 'hmp:map-filter';
+  var ACK_EVENT = 'hmp:map-filter-ack';
+  var READY_EVENT = 'hmp:map-filter-ready';
+  var TOKEN = 'hmpmf-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  var DEFAULT_GROUPS = [
+    { id: 'g-been', name: '已去', system: true, createdAt: 0 },
+    { id: 'g-want', name: '想去', system: true, createdAt: 1 },
+  ];
+  var BRIDGE_TIMEOUT = 600;
+
+  // ---------------------------------------------------------------- 纯逻辑
+  // 兼容 store.read() 的输出与 raw storage 值（schema 1/2）
+  function normalizeLibrary(raw) {
+    var src = raw && typeof raw === 'object' ? raw : {};
+    var groups = Array.isArray(src.groups) && src.groups.length
+      ? src.groups.filter(function (g) { return g && typeof g.id === 'string' && g.id; })
+        .map(function (g) {
+          return { id: g.id, name: String(g.name || ''), system: !!g.system, createdAt: Number(g.createdAt) || 0 };
+        })
+      : DEFAULT_GROUPS.map(function (g) { return { id: g.id, name: g.name, system: true, createdAt: g.createdAt }; });
+    var items = Array.isArray(src.items)
+      ? src.items.filter(function (it) {
+        return it && typeof it.steleId === 'string' && it.steleId && typeof it.groupId === 'string';
+      }).map(function (it) { return { steleId: it.steleId, groupId: it.groupId, name: String(it.name || '') }; })
+      : [];
+    return { groups: groups, items: items };
+  }
+
+  function groupIds(lib) { return lib.groups.map(function (g) { return g.id; }); }
+
+  // 勾选分组的并集（同一个 steleId 只出现一次；全关 → 空集，表示全部隐藏）
+  function computeKids(lib, checkedIds) {
+    var want = {};
+    (checkedIds || []).forEach(function (id) { want[id] = true; });
+    var seen = {};
+    var out = [];
+    lib.items.forEach(function (it) {
+      if (!want[it.groupId] || seen[it.steleId]) return;
+      seen[it.steleId] = true;
+      out.push(it.steleId);
+    });
+    return out;
+  }
+
+  function countByGroup(lib) {
+    var counts = {};
+    lib.items.forEach(function (it) { counts[it.groupId] = (counts[it.groupId] || 0) + 1; });
+    return counts;
+  }
+
+  function freshState() { return { mode: 'off', panelOpen: false, checked: [] }; }
+
+  // 状态机（任务书 §二）。返回 { state, effect }，effect = null | {cmd:'apply', kids} | {cmd:'clear'}
+  function next(state, action, lib) {
+    var s = { mode: state.mode, panelOpen: state.panelOpen, checked: state.checked.slice() };
+    var type = action && action.type;
+    if (type === 'button') {
+      if (s.mode === 'off') {
+        s.mode = 'on';
+        s.panelOpen = true;
+        s.checked = groupIds(lib);                       // 进入 on：默认全选
+        return { state: s, effect: { cmd: 'apply', kids: computeKids(lib, s.checked) } };
+      }
+      s.mode = 'off';                                    // on 再点按钮（面板开/合都一样）= 还原
+      s.panelOpen = false;
+      s.checked = [];
+      return { state: s, effect: { cmd: 'clear', kids: [] } };
+    }
+    if (type === 'toggle-group') {
+      if (s.mode !== 'on') return { state: s, effect: null };
+      var i = s.checked.indexOf(action.id);
+      if (i >= 0) s.checked.splice(i, 1); else s.checked.push(action.id);
+      return { state: s, effect: { cmd: 'apply', kids: computeKids(lib, s.checked) } };
+    }
+    if (type === 'close-panel') {
+      s.panelOpen = false;                               // 点外部 / Esc：只收面板，不还原
+      return { state: s, effect: null };
+    }
+    if (type === 'library') {                            // 收藏数据变化：不改勾选，实时重算
+      var ids = groupIds(lib);
+      s.checked = s.checked.filter(function (id) { return ids.indexOf(id) >= 0; });
+      return { state: s, effect: s.mode === 'on' ? { cmd: 'apply', kids: computeKids(lib, s.checked) } : null };
+    }
+    return { state: s, effect: null };
+  }
+
+  var core = {
+    TOKEN: TOKEN, KEY: KEY, DEFAULT_GROUPS: DEFAULT_GROUPS,
+    normalizeLibrary: normalizeLibrary, groupIds: groupIds, computeKids: computeKids,
+    countByGroup: countByGroup, freshState: freshState, next: next, buildCommand: buildCommand,
+  };
+
+  // ---------------------------------------------------------------- 收藏数据
+  // 优先复用内容侧已加载的 HMP.favoritesStore；否则直接读 storage（兼容 schema 1/2）
+  function readLibrary() {
+    var store = window.HMP && window.HMP.favoritesStore;
+    if (store && typeof store.read === 'function') {
+      return Promise.resolve().then(function () { return store.read(); })
+        .then(normalizeLibrary)
+        .catch(fallbackRead);
+    }
+    return fallbackRead();
+  }
+
+  function fallbackRead() {
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish(raw) {
+        if (done) return;
+        done = true;
+        try { resolve(normalizeLibrary(raw)); } catch (e) { resolve(normalizeLibrary(null)); }
+      }
+      try {
+        var local = window.chrome && window.chrome.storage && window.chrome.storage.local;
+        if (!local || typeof local.get !== 'function') return finish(null);
+        var p = local.get(KEY, function (obj) { finish(obj && obj[KEY]); });
+        if (p && typeof p.then === 'function') p.then(function (obj) { finish(obj && obj[KEY]); }, function () { finish(null); });
+      } catch (e) { finish(null); }
+    });
+  }
+
+  // ---------------------------------------------------------------- 桥通信
+  var bridgeSeen = false;
+  var injectTried = false;
+  var usedFallback = false;
+  var pending = null;
+  var timer = 0;
+  var lastAckInstances = -1;
+
+  function bridgeInSameWorld() {
+    // 只有「world:'MAIN' 不被支持、桥被当 isolated 脚本执行」时才会为真
+    return !!window.__HMP_MAP_BRIDGE_LOADED__;
+  }
+
+  function injectBridge() {
+    try {
+      var url = window.chrome && window.chrome.runtime && window.chrome.runtime.getURL
+        ? window.chrome.runtime.getURL('content/map-bridge.js') : '';
+      if (!url || !document || !document.documentElement) return false;
+      var s = document.createElement('script');
+      s.src = url;
+      s.onerror = function () { showNotice('当前浏览器版本不支持地图过滤'); };
+      (document.head || document.documentElement).appendChild(s);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function buildCommand(cmd, kids) {
+    return { cmd: cmd, kids: (kids || []).slice(), token: TOKEN };
+  }
+
+  function send(effect) {
+    try {
+      window.dispatchEvent(new CustomEvent(CMD_EVENT, { detail: buildCommand(effect.cmd, effect.kids) }));
+    } catch (e) {}
+  }
+
+  function scheduleCheck() {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      if (!pending) return;
+      if (bridgeSeen && !usedFallback) { pending = null; return; }   // 桥在，ack 可能迟到/丢失，不打扰用户
+      if (injectTried) {
+        pending = null;
+        showNotice('当前浏览器版本不支持地图过滤');
+        restoreUiOnly();
+        return;
+      }
+      injectTried = true;
+      usedFallback = injectBridge();
+      if (usedFallback) { send(pending); scheduleCheck(); return; }
+      pending = null;
+      showNotice('当前浏览器版本不支持地图过滤');
+      restoreUiOnly();
+    }, BRIDGE_TIMEOUT);
+  }
+
+  function runEffect(effect) {
+    if (!effect) return;
+    pending = { cmd: effect.cmd, kids: effect.kids || [] };
+    lastAckInstances = -1;
+    send(pending);
+    scheduleCheck();
+  }
+
+  // ---------------------------------------------------------------- Shadow DOM UI
+  var UI = null;   // { host, root, btn, panel, rows, empty, none, notice }
+  var state = freshState();
+  var lib = normalizeLibrary(null);
+
+  var CSS = [
+    ':host{all:initial;position:fixed;right:12px;bottom:64px;z-index:30;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;color:#333;line-height:1.4}',
+    '.wrap{position:relative;display:block}',
+    '.panel{position:absolute;right:0;bottom:44px;width:224px;box-sizing:border-box;padding:8px;background:#fff;border:1px solid #d8d8d8;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);opacity:0;transform:translateY(4px);visibility:hidden;pointer-events:none;transition:opacity .12s ease,transform .12s ease}',
+    '.panel.is-open{opacity:1;transform:none;visibility:visible;pointer-events:auto}',
+    '.ptitle{font-size:12px;color:#6f6f6f;padding:2px 8px 6px}',
+    '.row{display:flex;align-items:center;gap:8px;height:40px;box-sizing:border-box;padding:0 8px;border-radius:4px;cursor:pointer;font-size:13px;color:#333}',
+    '.row:hover{background:#f4f4f4}',
+    '.row input{width:16px;height:16px;margin:0;flex:0 0 auto;cursor:pointer;accent-color:#2f2f2f}',
+    '.row input:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}',
+    '.gname{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.gcount{flex:0 0 auto;font-size:12px;color:#6f6f6f}',
+    '.hint{font-size:12px;color:#6f6f6f;line-height:1.6;padding:6px 8px}',
+    '.hint span{display:block;color:#6f6f6f}',
+    '.btn{display:flex;align-items:center;gap:6px;height:36px;box-sizing:border-box;padding:0 12px;background:#fff;border:1px solid #d8d8d8;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.16);color:#333;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit}',
+    '.btn:hover{background:#f6f6f6}',
+    '.btn:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}',
+    '.btn.is-on{background:#2f2f2f;border-color:#2f2f2f;color:#fff}',
+    '.btn svg{width:16px;height:16px;flex:0 0 auto}',
+    '@media (prefers-reduced-motion: reduce){.panel{transition:opacity .12s ease;transform:none}}',
+  ].join('\n');
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function svgIcon() {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.6');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    [['M8 2 2.2 5 8 8l5.8-3L8 2Z'], ['m2.2 8 5.8 3 5.8-3'], ['m2.2 11 5.8 3 5.8-3']].forEach(function (d) {
+      var p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', d[0]);
+      svg.appendChild(p);
+    });
+    return svg;
+  }
+
+  function buildUi() {
+    if (!document || !document.body || typeof document.createElement !== 'function') return false;
+    var host = document.createElement('div');
+    host.id = 'hmp-map-filter';
+    if (typeof host.attachShadow !== 'function') return false;
+    var root = host.attachShadow({ mode: 'open' });
+
+    var style = el('style');
+    style.textContent = CSS;
+    root.appendChild(style);
+
+    var wrap = el('div', 'wrap');
+    var panel = el('div', 'panel');
+    panel.setAttribute('id', 'hmp-mf-panel');
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-label', '按分组显示收藏');
+    panel.setAttribute('aria-hidden', 'true');
+    panel.appendChild(el('div', 'ptitle', '按分组显示'));
+
+    var rows = el('div', 'rows');
+    panel.appendChild(rows);
+    var empty = el('div', 'hint');
+    empty.appendChild(el('span', null, '收藏夹是空的'));
+    empty.appendChild(el('span', null, '先在地图详情页收藏点位'));
+    empty.hidden = true;
+    panel.appendChild(empty);
+    var none = el('div', 'hint', '未选择分组');
+    none.hidden = true;
+    panel.appendChild(none);
+    var notice = el('div', 'hint');
+    notice.hidden = true;
+    panel.appendChild(notice);
+
+    var btn = el('button', 'btn');
+    btn.type = 'button';
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-controls', 'hmp-mf-panel');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.appendChild(svgIcon());
+    btn.appendChild(el('span', null, '只显示收藏'));
+
+    wrap.appendChild(panel);
+    wrap.appendChild(btn);
+    root.appendChild(wrap);
+    document.body.appendChild(host);
+
+    UI = { host: host, root: root, btn: btn, panel: panel, rows: rows, empty: empty, none: none, notice: notice };
+
+    btn.addEventListener('click', function () { dispatch({ type: 'button' }); });
+    document.addEventListener('pointerdown', function (e) {
+      if (!UI || !state.panelOpen) return;
+      var path = e && e.composedPath ? e.composedPath() : [];
+      if (path.indexOf(UI.host) >= 0) return;
+      dispatch({ type: 'close-panel' });
+    }, true);
+    document.addEventListener('keydown', function (e) {
+      if (e && (e.key === 'Escape' || e.key === 'Esc') && state.panelOpen) dispatch({ type: 'close-panel' });
+    });
+    return true;
+  }
+
+  function render() {
+    if (!UI) return;
+    var on = state.mode === 'on';
+    UI.btn.classList.toggle('is-on', on);
+    UI.btn.setAttribute('aria-expanded', String(state.panelOpen));
+    UI.btn.setAttribute('aria-pressed', String(on));
+    UI.panel.classList.toggle('is-open', state.panelOpen);
+    UI.panel.setAttribute('aria-hidden', String(!state.panelOpen));
+
+    UI.rows.textContent = '';
+    var hasItems = lib.items.length > 0;
+    UI.empty.hidden = hasItems;
+    UI.rows.hidden = !hasItems;
+    if (hasItems) {
+      var counts = countByGroup(lib);
+      lib.groups.forEach(function (g) {
+        var row = el('label', 'row');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = state.checked.indexOf(g.id) >= 0;
+        cb.addEventListener('change', function () { dispatch({ type: 'toggle-group', id: g.id }); });
+        row.appendChild(cb);
+        row.appendChild(el('span', 'gname', g.name));
+        row.appendChild(el('span', 'gcount', String(counts[g.id] || 0)));
+        UI.rows.appendChild(row);
+      });
+    }
+    UI.none.hidden = !(on && hasItems && state.checked.length === 0);
+    if (on && !hasItems && !UI.notice.textContent) UI.notice.hidden = true;
+  }
+
+  function showNotice(text) {
+    if (!UI) return;
+    UI.notice.textContent = text;
+    UI.notice.hidden = false;
+  }
+
+  function restoreUiOnly() {
+    state = freshState();
+    render();
+  }
+
+  function dispatch(action) {
+    var r = next(state, action, lib);
+    state = r.state;
+    render();
+    runEffect(r.effect);
+  }
+
+  // 收藏数据变化：新增/删除的 kid 落在勾选分组时实时重算，不改勾选
+  function watchStorage() {
+    try {
+      var onChanged = window.chrome && window.chrome.storage && window.chrome.storage.onChanged;
+      if (!onChanged || typeof onChanged.addListener !== 'function') return;
+      onChanged.addListener(function (changes, area) {
+        if (area && area !== 'local') return;
+        if (!changes || !changes[KEY]) return;
+        readLibrary().then(function (nextLib) {
+          lib = nextLib;
+          dispatch({ type: 'library' });
+        });
+      });
+    } catch (e) {}
+  }
+
+  window.addEventListener(ACK_EVENT, function (ev) {
+    var d = ev && ev.detail;
+    if (!d || d.token !== TOKEN) return;
+    bridgeSeen = true;
+    if (typeof d.instances === 'number') {
+      lastAckInstances = d.instances;
+      if (usedFallback && d.cmd === 'apply' && d.instances === 0) showNotice('当前浏览器版本不支持地图过滤');
+    }
+    if (pending && d.cmd === pending.cmd) pending = null;
+  });
+  window.addEventListener(READY_EVENT, function () { bridgeSeen = true; });
+
+  function boot() {
+    if (!buildUi()) return;                  // 无 DOM（测试/异常环境）时只保留 core
+    // 旧 Chrome：MAIN world 不支持，桥被当 isolated 脚本跑了 → 主动注入页面世界副本
+    if (bridgeInSameWorld()) { injectTried = true; usedFallback = injectBridge(); }
+    watchStorage();
+    readLibrary().then(function (nextLib) {
+      lib = nextLib;
+      render();
+      // 桥若在 filter 之后才就绪（或需要注入），把当前状态补发一次
+      if (state.mode === 'on') runEffect({ cmd: 'apply', kids: computeKids(lib, state.checked) });
+    });
+  }
+
+  if (typeof document !== 'undefined' && document) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+    else boot();
+  }
+
+  window.HMP = window.HMP || {};
+  window.HMP.mapFilter = core;
+})();

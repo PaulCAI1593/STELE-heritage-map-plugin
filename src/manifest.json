@@ -53,14 +53,36 @@
         "content/matcher.js",
         "content/decision-log.js",
         "content/card.js",
-        "content/content.js"
+        "content/content.js",
+        "content/map-filter.js"
       ],
       "css": [
         "content/content.css"
       ],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "*://stele.geogv.org/zhcn/*"
+      ],
+      "js": [
+        "content/map-bridge.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
     }
   ],
-  "web_accessible_resources": []
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/map-bridge.js"
+      ],
+      "matches": [
+        "*://stele.geogv.org/zhcn/*"
+      ]
+    }
+  ],
+  "minimum_chrome_version": "111"
 }
