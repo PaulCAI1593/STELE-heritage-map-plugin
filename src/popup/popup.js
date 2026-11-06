@@ -1502,6 +1502,64 @@
     });
   }
 
+  // #46：弹窗内「弹出到新窗口」。已有小窗则聚焦，否则新建 440×640 常驻小窗；
+  // 成功后关闭当前弹窗，看起来就是「弹窗变窗口」。失败保持弹窗，不报错。
+  const PANEL_WINDOW_KEY = 'hmp:panelWindowId';
+  function popPanelOut() {
+    const stays = () => { /* 保持弹窗 */ };
+    const closePopup = () => { try { window.close(); } catch (e) { /* 忽略 */ } };
+    const createPanel = () => {
+      try {
+        if (!chrome || !chrome.windows || typeof chrome.windows.create !== 'function') { stays(); return; }
+        const url = chrome.runtime.getURL('popup/popup.html') + '?window=1';
+        const after = win => {
+          const id = win && win.id;
+          try {
+            if (id != null && chrome.storage && chrome.storage.session) {
+              chrome.storage.session.set({ [PANEL_WINDOW_KEY]: id });
+            }
+          } catch (e) { /* 忽略 */ }
+          closePopup();
+        };
+        const ret = chrome.windows.create({ url, type: 'popup', width: 440, height: 640 }, after);
+        if (ret && typeof ret.then === 'function') ret.then(after, stays);
+        else if (ret && typeof ret.id !== 'undefined') after(ret);
+        // 回调形态下 after 由 chrome 调用；若既无回调也无 Promise，保持弹窗。
+      } catch (e) { stays(); }
+    };
+    const focusOrCreate = id => {
+      if (id == null) { createPanel(); return; }
+      let handled = false;
+      const fail = () => { if (handled) return; handled = true; createPanel(); };
+      const onGet = win => {
+        if (handled) return;
+        const err = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) || null;
+        if (err || !win) { fail(); return; }
+        handled = true;
+        try {
+          if (!chrome.windows || typeof chrome.windows.update !== 'function') { createPanel(); return; }
+          chrome.windows.update(id, { focused: true });
+          closePopup();
+        } catch (e) { handled = false; fail(); }
+      };
+      try {
+        const ret = chrome.windows.get(id, onGet);
+        if (ret && typeof ret.then === 'function') ret.then(onGet, fail);
+      } catch (e) { fail(); }
+    };
+    try {
+      const session = (chrome && chrome.storage && chrome.storage.session) || null;
+      if (session && typeof session.get === 'function') {
+        const got = items => {
+          try { focusOrCreate(items && items[PANEL_WINDOW_KEY] != null ? items[PANEL_WINDOW_KEY] : null); }
+          catch (e) { createPanel(); }
+        };
+        const ret = session.get([PANEL_WINDOW_KEY], got);
+        if (ret && typeof ret.then === 'function') ret.then(got, createPanel);
+      } else focusOrCreate(null);
+    } catch (e) { createPanel(); }
+  }
+
   // ---------------- 绑定 ----------------
   function bind() {
     // 主题
@@ -1555,6 +1613,7 @@
 
     bindFavorites();
     bindFavoritesStorageSync();
+    if ($('popoutBtn')) $('popoutBtn').addEventListener('click', popPanelOut);
 
     if (!savedSnapshot) resetRes();
   }
@@ -1590,11 +1649,14 @@
 
   // #43：工具栏图标打开的是独立小窗（service worker 加 ?window=1）。
   // 只有该模式铺满窗口宽度；普通扩展弹窗（若以后恢复 default_popup）仍走 400 固定宽。
+  // #46：窗口模式下「弹出到新窗口」按钮无意义，隐藏（CSS 兜底 + JS 置 hidden）。
   function applyWindowMode() {
     try {
       const q = (window.location && window.location.search) || '';
       if (/(?:^|[?&])window=1(?:&|$)/.test(q) && document.documentElement) {
         document.documentElement.dataset.hmpWindow = '1';
+        const btn = document.getElementById('popoutBtn');
+        if (btn) btn.hidden = true;
       }
     } catch (e) { /* 忽略 */ }
   }

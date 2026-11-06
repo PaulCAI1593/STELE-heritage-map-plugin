@@ -26,6 +26,16 @@ body{margin:0;background:var(--hmp-page);color:var(--hmp-text);font:14px/1.5 -ap
 .tgl input:focus-visible + .trk{outline:2px solid var(--hmp-link);outline-offset:2px}
 .tgl .tlb{font-size:13px;color:var(--hmp-text)}
 
+/* #46：弹窗内「弹出到新窗口」图标按钮（32 视觉 / 40 触控；窗口模式隐藏） */
+.hmp-popout{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;
+  margin-top:2px;padding:0;position:relative;background:var(--hmp-input-bg);border:1px solid var(--hmp-border);
+  border-radius:var(--hmp-r-sm);color:var(--hmp-primary);cursor:pointer}
+.hmp-popout .ic{width:16px;height:16px}
+.hmp-popout::after{content:"";position:absolute;inset:-4px;border-radius:var(--hmp-r-sm)}
+.hmp-popout:hover{background:var(--hmp-hover)}
+.hmp-popout:focus-visible{outline:2px solid var(--hmp-link);outline-offset:2px}
+html[data-hmp-window="1"] .hmp-popout{display:none}
+
 /* 右上角主题开关：单段 32px 高，选中态＝底色＋描边＋字重 */
 .seg{display:flex;flex:0 0 auto;border:1px solid var(--hmp-border);border-radius:var(--hmp-r-sm);overflow:hidden;
   background:var(--hmp-surface-2)}

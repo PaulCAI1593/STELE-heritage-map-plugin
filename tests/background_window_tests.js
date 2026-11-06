@@ -77,9 +77,11 @@ function build(opts) {
 
 const KEY = 'hmp:panelWindowId';
 
-console.log('\n=== manifest：action 无 default_popup、无新增权限 ===');
+console.log('\n=== manifest：默认贴图标弹窗 + 无新增权限 ===');
 {
-  check('#43 manifest 去掉 action.default_popup', !manifest.action || !manifest.action.default_popup);
+  // #46：用户拍板恢复默认弹窗；点图标出 popup，弹窗内图标按钮可弹出为独立小窗。
+  check('#46 manifest 恢复 action.default_popup', !!manifest.action && manifest.action.default_popup === 'popup/popup.html',
+    'default_popup=' + (manifest.action && manifest.action.default_popup));
   check('#43 权限只有 storage（无 tabs/windows）',
     JSON.stringify(manifest.permissions) === JSON.stringify(['storage']),
     'permissions=' + JSON.stringify(manifest.permissions));

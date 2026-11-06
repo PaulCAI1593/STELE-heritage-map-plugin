@@ -12,6 +12,8 @@ const SRC = path.join(__dirname, '..', 'src');
 const popupJs = fs.readFileSync(path.join(SRC, 'popup', 'popup.js'), 'utf8');
 const storeJs = fs.readFileSync(path.join(SRC, 'shared', 'favorites-store.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
+const popupHtml = fs.readFileSync(path.join(SRC, 'popup', 'popup.html'), 'utf8');
+const popupCss = fs.readFileSync(path.join(SRC, 'popup', 'popup.css'), 'utf8');
 
 class El {
   constructor(id) {
@@ -31,6 +33,7 @@ class El {
       },
     };
     this.tagName = 'DIV';
+    this.dataset = {};
   }
   set innerHTML(v) { this._html = String(v == null ? '' : v); if (this._html === '') this.children = []; }
   get innerHTML() { return this._html; }
@@ -57,7 +60,7 @@ const IDS = [
   'favHint', 'favHintText', 'favEmpty', 'favEmptyTitle', 'favEmptyBody', 'favEmptyGo', 'favEmptyClear',
   'favExport', 'favNewForm', 'favRenameForm', 'favNewName', 'favRenameName',
   'favNewOk', 'favNewCancel', 'favRenameOk', 'favRenameCancel',
-  'favNewGroup', 'favRenameGroup', 'favDeleteGroup'
+  'favNewGroup', 'favRenameGroup', 'favDeleteGroup', 'popoutBtn'
 ];
 const FKEY = 'hmp:favorites:v1';
 
@@ -72,6 +75,8 @@ function build(opts) {
   const store = Object.assign({}, o.store || {});
   const domListeners = {};
   const tabCalls = { query: [], update: [], create: [] };
+  const winCalls = { get: [], update: [], create: [], sessionSet: [] };
+  const session = Object.assign({}, o.session || {});
   let closeCount = 0;
   const onChanged = {
     _ls: [],
@@ -82,6 +87,7 @@ function build(opts) {
 
   global.window = global;
   global.close = () => { closeCount++; };
+  global.location = o.location || { search: '', href: 'chrome-extension://test/popup/popup.html' };
   global.HMP = { apis: { amap: { search: async () => [] }, baidu: { search: async () => [] } } };
   global.document = {
     documentElement: new El('html'),
@@ -94,6 +100,17 @@ function build(opts) {
   global.chrome = {
     storage: {
       onChanged,
+      session: {
+        _store: session,
+        get(keys, cb) {
+          const out = {};
+          [].concat(keys).forEach(k => { if (Object.prototype.hasOwnProperty.call(session, k)) out[k] = session[k]; });
+          if (cb) { cb(out); return undefined; }
+          return Promise.resolve(out);
+        },
+        set(obj, cb) { Object.assign(session, obj); winCalls.sessionSet.push(obj); if (cb) { cb(); return undefined; } return Promise.resolve(); },
+        remove(keys, cb) { [].concat(keys).forEach(k => { delete session[k]; }); if (cb) { cb(); return undefined; } return Promise.resolve(); },
+      },
       local: {
         _store: store,
         get(keys, cb) {
@@ -124,7 +141,7 @@ function build(opts) {
         },
       },
     },
-    runtime: { getManifest: () => ({ version: '0.5.1' }) },
+    runtime: { getManifest: () => ({ version: '0.5.1' }), getURL: p => 'chrome-extension://test/' + p },
     tabs: {
       query(q, cb) {
         tabCalls.query.push(q);
@@ -148,6 +165,26 @@ function build(opts) {
       },
     },
     windows: {
+      get(id, cb) {
+        winCalls.get.push(id);
+        if (o.winGetThrows) throw new Error('get failed');
+        if (o.winGetExists === false) {
+          chrome.runtime.lastError = { message: 'No window with id: ' + id };
+          if (cb) cb(undefined);
+          chrome.runtime.lastError = undefined;
+          return undefined;
+        }
+        const win = { id };
+        if (cb) { cb(win); return undefined; }
+        return Promise.resolve(win);
+      },
+      update(id, props, cb) { winCalls.update.push({ id, props }); if (cb) { cb(); return undefined; } return Promise.resolve(); },
+      create(args, cb) {
+        winCalls.create.push(args);
+        const win = { id: 501 };
+        if (cb) { cb(win); return undefined; }
+        return Promise.resolve(win);
+      },
       getLastFocused(args, cb) {
         tabCalls.getLastFocused = (tabCalls.getLastFocused || 0) + 1;
         if (o.getLastFocusedThrows) throw new Error('getLastFocused failed');
@@ -167,7 +204,7 @@ function build(opts) {
   (0, eval)(storeJs);
   (0, eval)(popupJs);
   if (domListeners.DOMContentLoaded) domListeners.DOMContentLoaded();
-  return { els, store, onChanged, popup: global.HMP.popup, tabCalls, closeCount: () => closeCount };
+  return { els, store, session, onChanged, popup: global.HMP.popup, tabCalls, winCalls, closeCount: () => closeCount };
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -355,7 +392,59 @@ function lib(items) {
     check('#45 源码用 getLastFocused({windowTypes:[normal]}) 取普通窗口',
       popupJs.indexOf("getLastFocused({ windowTypes: ['normal'] }") !== -1);
     check('#45 源码不再用 currentWindow 定位', popupJs.indexOf('currentWindow: true') === -1);
-    check('#45 源码不再调用 window.close()', popupJs.indexOf('window.close()') === -1);
+    const locateSrc = popupJs.slice(popupJs.indexOf('function openFavorite(item)'), popupJs.indexOf('function popPanelOut'));
+    check('#45 定位路径不再调用 window.close()', locateSrc.indexOf('window.close()') === -1);
+  }
+
+  console.log('\n=== #46 弹窗内「弹出到新窗口」 ===');
+  {
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    H.els.popoutBtn.click();
+    const c = H.winCalls.create[0] || {};
+    check('#46 普通模式点按钮：create 一次（440×640、popup、url 含 window=1）',
+      H.winCalls.create.length === 1 && c.type === 'popup' && c.width === 440 && c.height === 640 &&
+      /popup\/popup\.html\?window=1$/.test(String(c.url || '')),
+      'create=' + JSON.stringify(H.winCalls.create));
+    check('#46 create 后写 storage.session 并关闭弹窗',
+      H.winCalls.sessionSet.length === 1 && H.winCalls.sessionSet[0]['hmp:panelWindowId'] === 501 &&
+      H.closeCount() === 1,
+      'sessionSet=' + JSON.stringify(H.winCalls.sessionSet) + ' closes=' + H.closeCount());
+  }
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' }, session: { 'hmp:panelWindowId': 42 } });
+    await sleep(30);
+    H.els.popoutBtn.click();
+    check('#46 已有小窗：只 update(42,{focused:true})、不 create、关弹窗',
+      H.winCalls.get.length === 1 && H.winCalls.get[0] === 42 &&
+      H.winCalls.update.length === 1 && H.winCalls.update[0].id === 42 &&
+      H.winCalls.update[0].props.focused === true && H.winCalls.create.length === 0 &&
+      H.closeCount() === 1,
+      'get=' + JSON.stringify(H.winCalls.get) + ' update=' + JSON.stringify(H.winCalls.update) + ' create=' + H.winCalls.create.length);
+  }
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' }, session: { 'hmp:panelWindowId': 42 }, winGetExists: false });
+    await sleep(30);
+    H.els.popoutBtn.click();
+    check('#46 session 里的窗口已不存在：退回 create 一次、不 update、关弹窗',
+      H.winCalls.get.length === 1 && H.winCalls.create.length === 1 &&
+      H.winCalls.update.length === 0 && H.closeCount() === 1,
+      'get=' + JSON.stringify(H.winCalls.get) + ' create=' + H.winCalls.create.length + ' update=' + H.winCalls.update.length);
+  }
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' }, location: { search: '?window=1', href: 'chrome-extension://test/popup/popup.html?window=1' } });
+    await sleep(30);
+    check('#46 窗口模式：按钮 hidden + 根节点 data-hmp-window=1',
+      H.els.popoutBtn.hidden === true && H === H &&
+      popupCss.indexOf('html[data-hmp-window="1"] .hmp-popout{display:none}') !== -1,
+      'hidden=' + H.els.popoutBtn.hidden);
+    check('#46 弹窗按钮为 SVG 图标且 aria-label/title 完整',
+      /id="popoutBtn"[^>]*aria-label="弹出到新窗口"[^>]*title="弹出到新窗口"/.test(popupHtml) &&
+      popupHtml.indexOf('class="hmp-popout"') !== -1 && popupHtml.indexOf('<svg') !== -1,
+      'html ok');
   }
 
   finish();
