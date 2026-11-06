@@ -141,7 +141,7 @@ function build(opts) {
         },
       },
     },
-    runtime: { getManifest: () => ({ version: '0.5.1' }), getURL: p => 'chrome-extension://test/' + p },
+    runtime: { getManifest: () => ({ version: '0.5.2' }), getURL: p => 'chrome-extension://test/' + p },
     tabs: {
       query(q, cb) {
         tabCalls.query.push(q);
