@@ -802,8 +802,51 @@
     try { chrome.tabs.create({ url }); } catch (e) { window.open(url, '_blank'); }
   }
 
+  function closePopup() {
+    try { if (typeof window.close === 'function') window.close(); } catch (e) { /* 忽略 */ }
+  }
+
+  // #42：定位在本页打开——当前标签有 id 时 update 其 URL 并关弹窗；
+  // update 失败 / 无 id（chrome:// 等受限页）退回新开标签，不报错给用户。
+  // 不加 tabs 权限：query 取 id、update 设 URL 都不需要它。
   function openFavorite(item) {
-    openExternal(buildDeepLink(item.steleId) || buildSearchLink(item.name));
+    const url = buildDeepLink(item.steleId) || buildSearchLink(item.name);
+    if (!url) return;
+    const tabs = (typeof chrome !== 'undefined' && chrome.tabs) ? chrome.tabs : null;
+    if (!tabs || typeof tabs.query !== 'function') { openExternal(url); return; }
+
+    let done = false;
+    const fallback = () => { if (done) return; done = true; openExternal(url); };
+    const finish = () => { if (done) return; done = true; closePopup(); };
+
+    const onUpdate = (err) => {
+      if (done) return;
+      if (err) fallback(); else finish();
+    };
+    let queried = false;
+    const onTab = (tab) => {
+      if (done || queried) return;
+      queried = true;
+      if (!tab || tab.id == null || typeof tabs.update !== 'function') { fallback(); return; }
+      let updateCalled = false;
+      try {
+        const ret = tabs.update(tab.id, { url }, () => {
+          if (updateCalled) return;
+          updateCalled = true;
+          const last = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) || null;
+          onUpdate(last);
+        });
+        if (ret && typeof ret.then === 'function') {
+          ret.then(() => { if (!updateCalled) { updateCalled = true; onUpdate(null); } },
+                   () => { if (!updateCalled) { updateCalled = true; onUpdate({ message: 'update failed' }); } });
+        }
+      } catch (e) { fallback(); }
+    };
+
+    try {
+      const ret = tabs.query({ active: true, currentWindow: true }, list => onTab(list && list[0]));
+      if (ret && typeof ret.then === 'function') ret.then(list => onTab(list && list[0]), fallback);
+    } catch (e) { fallback(); }
   }
 
   function amapUrlOf(item) {

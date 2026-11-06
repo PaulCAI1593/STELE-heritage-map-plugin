@@ -11,6 +11,7 @@ const { check, finish } = makeChecker('popup-fav-sync');
 const SRC = path.join(__dirname, '..', 'src');
 const popupJs = fs.readFileSync(path.join(SRC, 'popup', 'popup.js'), 'utf8');
 const storeJs = fs.readFileSync(path.join(SRC, 'shared', 'favorites-store.js'), 'utf8');
+const manifest = JSON.parse(fs.readFileSync(path.join(SRC, 'manifest.json'), 'utf8'));
 
 class El {
   constructor(id) {
@@ -70,6 +71,8 @@ function build(opts) {
 
   const store = Object.assign({}, o.store || {});
   const domListeners = {};
+  const tabCalls = { query: [], update: [], create: [] };
+  let closeCount = 0;
   const onChanged = {
     _ls: [],
     addListener(fn) { this._ls.push(fn); },
@@ -78,6 +81,7 @@ function build(opts) {
   };
 
   global.window = global;
+  global.close = () => { closeCount++; };
   global.HMP = { apis: { amap: { search: async () => [] }, baidu: { search: async () => [] } } };
   global.document = {
     documentElement: new El('html'),
@@ -121,13 +125,27 @@ function build(opts) {
       },
     },
     runtime: { getManifest: () => ({ version: '0.5.0' }) },
-    tabs: { create() {} },
+    tabs: {
+      query(q, cb) {
+        tabCalls.query.push(q);
+        if (o.tabsQuery) return o.tabsQuery(q, cb);
+        if (cb) cb([{ id: 7 }]);
+        return undefined;
+      },
+      update(id, props, cb) {
+        tabCalls.update.push({ id, props });
+        if (o.tabsUpdate) return o.tabsUpdate(id, props, cb);
+        if (cb) cb();
+        return undefined;
+      },
+      create(p) { tabCalls.create.push(p); },
+    },
   };
 
   (0, eval)(storeJs);
   (0, eval)(popupJs);
   if (domListeners.DOMContentLoaded) domListeners.DOMContentLoaded();
-  return { els, store, onChanged, popup: global.HMP.popup };
+  return { els, store, onChanged, popup: global.HMP.popup, tabCalls, closeCount: () => closeCount };
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -229,6 +247,76 @@ function lib(items) {
       f.undoText({ items: [{ item: { name: '龙华寺' }, groupId: 'g-want' }] }) === '已取消收藏「龙华寺」');
     check('多条撤销：给条数',
       f.undoText({ items: [{ item: { name: '甲' } }, { item: { name: '乙' } }, {}] }) === '已取消收藏 3 条');
+  }
+
+  console.log('\n=== #42 定位：当前标签页打开，失败/无标签退回新开 ===');
+  const oneFav = lib([
+    { steleId: 'abc123', name: '龙华寺', address: '龙华路2853号', groupId: 'g-want', savedAt: 1000 },
+  ]);
+  const seedOne = async (H) => {
+    chrome.storage.local.set({ [FKEY]: oneFav });
+    await sleep(30);
+    return H.els.favList.children[0].children[0];
+  };
+  const DEEP = 'https://stele.geogv.org/zhcn/geo/abc123';
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    const main = await seedOne(H);
+    main.click();
+    check('#42 有当前标签：只调 update(id,{url})，不调 create',
+      H.tabCalls.update.length === 1 && H.tabCalls.update[0].id === 7 &&
+      H.tabCalls.update[0].props.url === DEEP && H.tabCalls.create.length === 0,
+      'update=' + JSON.stringify(H.tabCalls.update) + ' create=' + H.tabCalls.create.length);
+    check('#42 有当前标签：query 为 active+currentWindow，成功后关弹窗',
+      H.tabCalls.query.length === 1 && H.tabCalls.query[0].active === true &&
+      H.tabCalls.query[0].currentWindow === true && H.closeCount() === 1,
+      'query=' + JSON.stringify(H.tabCalls.query) + ' closes=' + H.closeCount());
+  }
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' }, tabsUpdate: () => { throw new Error('denied'); } });
+    await sleep(30);
+    const main = await seedOne(H);
+    main.click();
+    check('#42 update 抛错：退回 create 一次、不关弹窗',
+      H.tabCalls.update.length === 1 && H.tabCalls.create.length === 1 &&
+      H.tabCalls.create[0].url === DEEP && H.closeCount() === 0,
+      'update=' + H.tabCalls.update.length + ' create=' + JSON.stringify(H.tabCalls.create) + ' closes=' + H.closeCount());
+  }
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' }, tabsQuery: (q, cb) => cb([]) });
+    await sleep(30);
+    const main = await seedOne(H);
+    main.click();
+    check('#42 无当前标签（受限页）：退回 create 一次、不调 update',
+      H.tabCalls.query.length === 1 && H.tabCalls.update.length === 0 &&
+      H.tabCalls.create.length === 1 && H.tabCalls.create[0].url === DEEP,
+      'update=' + H.tabCalls.update.length + ' create=' + JSON.stringify(H.tabCalls.create));
+  }
+
+  {
+    const H = build({ store: { hmpTheme: 'paper' } });
+    await sleep(30);
+    const main = await seedOne(H);
+    const li = H.els.favList.children[0];
+    const amapBtn = li.children[1].children[0].children[0];
+    amapBtn.click();
+    check('#42 外部地图链接（高德）仍 create、不 update 当前页',
+      H.tabCalls.create.length === 1 && /uri\.amap\.com/.test(H.tabCalls.create[0].url) &&
+      H.tabCalls.update.length === 0 && H.tabCalls.query.length === 0,
+      'create=' + JSON.stringify(H.tabCalls.create) + ' update=' + H.tabCalls.update.length);
+  }
+
+  {
+    const perms = [].concat(manifest.permissions || [], manifest.host_permissions || []);
+    check('#42 未新增 tabs 权限', perms.indexOf('tabs') === -1, 'permissions=' + JSON.stringify(perms));
+    check('#42 源码走 tabs.query + tabs.update 路径',
+      popupJs.indexOf("chrome.tabs.query({ active: true, currentWindow: true }") !== -1 ||
+      popupJs.indexOf('tabs.query({ active: true, currentWindow: true }') !== -1,
+      'query call missing');
   }
 
   finish();
