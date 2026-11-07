@@ -100,8 +100,21 @@ check('日志：schema 仍为 2（加字段不升版本）', v2.schema === 2 && 
 
 // ---------------- 卡片：显示与 why 语义 ----------------
 console.log('\n=== 卡片显示 / why ===');
-check('卡片：drift 提示文案「同名地点，坐标偏差约 X 公里（位置以点位地址为准）」',
-  /同名地点，坐标偏差约 /.test(cardSrc) && /公里（位置以点位地址为准）/.test(cardSrc));
+check('卡片：#68 drift 警示块标题「同名地点，坐标偏差约 X 公里」+ 副行「位置以点位地址为准」',
+  /buildAlert\(.drift.,\s*\n?\s*.同名地点，坐标偏差约 /.test(cardSrc) &&
+  /位置以点位地址为准/.test(cardSrc) &&
+  /hmp-alert/.test(cardSrc));
+check('卡片：#68 非 exact 警示块标题「该地点距点位约 X 公里」+ 副行「请核对是否同一处」',
+  /buildAlert\(.distance.,/.test(cardSrc) && /该地点距点位约 /.test(cardSrc) && /请核对是否同一处/.test(cardSrc));
+const warnSrc = cardSrc.slice(cardSrc.indexOf('const SVG_NS'), cardSrc.indexOf('// ========== 卡片渲染 =========='));
+check('卡片：#68 未开放提醒复用同一组件（closure 分支，文字一字不改、无 ⚠ 字符）',
+  /buildAlert\('closure',/.test(cardSrc) &&
+  /地图信息显示该点位可能不开放（含「' \+ hint \+ '」）/.test(cardSrc) &&
+  /建议先电话确认再前往。/.test(cardSrc) &&
+  /'⚠ /.test(cardSrc) === false);
+check('卡片：#68 警示块含内联 SVG 三角叹号（不用 emoji）',
+  /createElementNS\(SVG_NS, .path.\)/.test(warnSrc) && /hmp-alert-ic/.test(warnSrc) &&
+  !/[\u26A0\u2757\u26A1]/.test(warnSrc), warnSrc.slice(0, 80));
 check('卡片：drift 只在 coordinateDriftKm 非空时渲染',
   /if \(state\.coordinateDriftKm != null\)/.test(cardSrc));
 check('卡片：exact 候选放宽到 COORD_DRIFT_MAX_DIST（不是写死 10000）',
@@ -110,10 +123,24 @@ check('卡片：exact 候选放宽到 COORD_DRIFT_MAX_DIST（不是写死 10000�
 // #29：三档升级为四档 exact 3 > 同址强证据 2 > shortForm 1 > 其余 0。
 check('卡片：exact 候选优先于非同名（#29 四档：exact > 同址 > shortForm > 其余）',
   /const tier = exactCand \? 3 : \(candSame \? 2 : \(candShort \? 1 : 0\)\)/.test(cardSrc) && /tier > best\.tier/.test(cardSrc));
-check('卡片：#24 偏差小字用专用类 hmp-drift-note 且 CSS 为 12px / #707070',
-  /hmp-sub-note hmp-drift-note/.test(cardSrc) &&
-  /#hmp-opening-card \.hmp-sub-note\.hmp-drift-note \{[^}]*font-size: 12px/.test(cssSrc) &&
-  /#hmp-opening-card \.hmp-sub-note\.hmp-drift-note \{[^}]*color: #707070/.test(cssSrc));
+check('卡片：#68 警示块 CSS（浅黄底 #FFF6E8 / 左橙条 3px #D98E32 / 圆角 4 / padding 7px 9px）',
+  /#hmp-opening-card \.hmp-alert \{[^}]*background: #FFF6E8/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert \{[^}]*border-left: 3px solid #D98E32/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert \{[^}]*border-radius: 4px/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert \{[^}]*padding: 7px 9px/.test(cssSrc));
+check('卡片：#68 标题 13px/600 #7A4A00、副行 11.5px opacity .82、图标 14px #B26A00',
+  /#hmp-opening-card \.hmp-alert-title \{[^}]*font-size: 13px/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert-title \{[^}]*font-weight: 600/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert-title \{[^}]*color: #7A4A00/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert-sub \{[^}]*font-size: 11\.5px/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert-sub \{[^}]*opacity: \.82/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert-ic \{[^}]*width: 14px/.test(cssSrc) &&
+  /#hmp-opening-card \.hmp-alert-ic \{[^}]*color: #B26A00/.test(cssSrc));
+// 对比度实算：#7A4A00 于 #FFF6E8（WCAG 2.1）
+function lum(h){const c=[0,2,4].map(i=>{let v=parseInt(h.slice(i,i+2),16)/255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);});return 0.2126*c[0]+0.7152*c[1]+0.0722*c[2];}
+const warnBg=lum('FFF6E8'), warnInk=lum('7A4A00');
+const warnCr=+((Math.max(warnBg,warnInk)+0.05)/(Math.min(warnBg,warnInk)+0.05)).toFixed(2);
+check('卡片：#68 #7A4A00 于 #FFF6E8 对比度 ≥ 4.5（实算 ' + warnCr + ':1）', warnCr >= 4.5, String(warnCr));
 check('why：失败原因只在未命中时写（note && !m）', /if \(note && !m\)/.test(cardSrc) && !/if \(note\) why\.push\(note\)/.test(cardSrc));
 check('why：命中时写「选中「…」」事实', /why\.push\('选中「'/.test(cardSrc));
 check('payload 带 coordinateDriftKm 并进渲染态', /coordinateDriftKm: \(result\.matched/.test(cardSrc) && /coordinateDriftKm: cacheData\.coordinateDriftKm/.test(cardSrc));

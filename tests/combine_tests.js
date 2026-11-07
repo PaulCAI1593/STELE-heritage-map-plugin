@@ -47,6 +47,8 @@ modalBody.appendChild(basicEl); docBody.appendChild(modalBody);
 global.document = {
   body: docBody,
   createElement: t => new El(t),
+  // #68：警示块用内联 SVG（三角叹号），假 DOM 也要支持命名空间建元素
+  createElementNS: (ns, t) => new El(t),
   createTextNode: t => ({ nodeType: 3, textContent: t }),
   getElementById: id => (id === 'poi-basic-info-section' ? basicEl : null),
   querySelector: s => (s === '.modal-body' ? modalBody : null),

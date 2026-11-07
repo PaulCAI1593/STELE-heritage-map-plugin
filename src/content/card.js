@@ -60,6 +60,50 @@
     return e;
   }
 
+  // #68：卡片上的「合理提醒」共用一个警示块组件（距离/坐标偏差 与 可能未开放）。
+  // 视觉：浅黄底 + 左侧橙条 + 内联三角叹号 + 标题/副行两段；只改显示，判定与文案口径不变。
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function alertIcon() {
+    const s = document.createElementNS(SVG_NS, 'svg');
+    s.setAttribute('class', 'hmp-alert-ic');
+    s.setAttribute('viewBox', '0 0 16 16');
+    s.setAttribute('aria-hidden', 'true');
+    const tri = document.createElementNS(SVG_NS, 'path');
+    tri.setAttribute('d', 'M8 2.2 14.4 13.7H1.6L8 2.2Z');
+    tri.setAttribute('fill', 'none');
+    tri.setAttribute('stroke', 'currentColor');
+    tri.setAttribute('stroke-width', '1.4');
+    tri.setAttribute('stroke-linejoin', 'round');
+    const bar = document.createElementNS(SVG_NS, 'path');
+    bar.setAttribute('d', 'M8 6.3v3.1');
+    bar.setAttribute('fill', 'none');
+    bar.setAttribute('stroke', 'currentColor');
+    bar.setAttribute('stroke-width', '1.6');
+    bar.setAttribute('stroke-linecap', 'round');
+    const dot = document.createElementNS(SVG_NS, 'circle');
+    dot.setAttribute('cx', '8');
+    dot.setAttribute('cy', '11.6');
+    dot.setAttribute('r', '0.85');
+    dot.setAttribute('fill', 'currentColor');
+    s.appendChild(tri);
+    s.appendChild(bar);
+    s.appendChild(dot);
+    return s;
+  }
+
+  // kind：'drift' | 'distance' | 'closure'（closure 不带 data-hmp-note，文案与旧版一字不差）
+  function buildAlert(kind, title, sub) {
+    const attrs = { className: 'hmp-alert', role: 'note' };
+    if (kind === 'drift' || kind === 'distance') attrs['data-hmp-note'] = kind;
+    const box = el('div', attrs);
+    box.appendChild(alertIcon());
+    const body = el('div', { className: 'hmp-alert-body' });
+    body.appendChild(el('p', { className: 'hmp-alert-title' }, title));
+    if (sub) body.appendChild(el('p', { className: 'hmp-alert-sub' }, sub));
+    box.appendChild(body);
+    return box;
+  }
+
   // ========== 卡片渲染 ==========
   //
   // 结构刻意完全套用站点自己的写法，保证视觉一致：
@@ -351,13 +395,14 @@
     const hint = closureHint(info);
     const probe = state.closureProbe;
     if (hint) {
-      children.push(el('div', { className: 'hmp-alert' },
-        '⚠ 地图信息显示该点位可能不开放（含「' + hint + '」），建议先电话确认再前往。'));
+      children.push(buildAlert('closure',
+        '地图信息显示该点位可能不开放（含「' + hint + '」）',
+        '建议先电话确认再前往。'));
     } else if (probe) {
       // 状态来自"另一家"：如实写明是哪一家标的，不笼统说"地图信息显示"。
-      children.push(el('div', { className: 'hmp-alert' },
-        '⚠ ' + label(probe.provider) + '标记该点位可能不开放（含「' + probe.hint +
-        '」），建议先电话确认再前往。'));
+      children.push(buildAlert('closure',
+        label(probe.provider) + '标记该点位可能不开放（含「' + probe.hint + '」）',
+        '建议先电话确认再前往。'));
     }
 
     // 匹配方式提示：让用户能核对自己看到的是哪个地图 POI。
@@ -385,19 +430,15 @@
       children.push(line);
     }
 
-    // #24：同名地点在 3–10 km 时的坐标偏差提示（12px，沿用证据小字样式）
-    // #26：任意匹配只要远于 3 km 都给距离提示；exact 用偏差文案，其余用核对文案。
-    //       两条互斥（exact 优先），不重复出现。
+    // #24/#26：同名地点坐标偏差 / 远距离提示（#68 改醒目警示块），两条互斥（exact 优先）
     if (state.coordinateDriftKm != null) {
-      children.push(el('div', {
-        className: 'hmp-sub-note hmp-drift-note', 'data-hmp-note': 'drift',
-      }, '同名地点，坐标偏差约 ' + Number(state.coordinateDriftKm).toFixed(1) +
-        ' 公里（位置以点位地址为准）'));
+      children.push(buildAlert('drift',
+        '同名地点，坐标偏差约 ' + Number(state.coordinateDriftKm).toFixed(1) + ' 公里',
+        '位置以点位地址为准'));
     } else if (state.distanceKm != null) {
-      children.push(el('div', {
-        className: 'hmp-sub-note hmp-drift-note', 'data-hmp-note': 'distance',
-      }, '该地点距点位约 ' + Number(state.distanceKm).toFixed(1) +
-        ' 公里，请核对是否同一处'));
+      children.push(buildAlert('distance',
+        '该地点距点位约 ' + Number(state.distanceKm).toFixed(1) + ' 公里',
+        '请核对是否同一处'));
     }
 
     // 三路证据（小字）：名称/地址/坐标各有多少候选、最高相似度多少

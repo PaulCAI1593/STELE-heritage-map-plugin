@@ -126,7 +126,8 @@ check('⑥卡片：地名兜底 weakMatch 一律取距离（不受 3 km 下限�
   /weakMatch && Number\.isFinite\(sc\.dist\)/.test(cardSrc)
   && /Math\.round\(sc\.dist \/ 100\) \/ 10 : distanceKmOf\(sc\.dist\)/.test(cardSrc));
 check('⑥卡片：提示仍走 #26 的 distance 文案与 data-hmp-note="distance"',
-  /请核对是否同一处/.test(cardSrc) && /'data-hmp-note': 'distance'/.test(cardSrc));
+  /请核对是否同一处/.test(cardSrc) && /buildAlert\('distance',/.test(cardSrc) &&
+  /attrs\['data-hmp-note'\] = kind/.test(cardSrc));
 // #29 收尾：expectedDistanceKm 校验的是「点位到选中点的直线距离」（任何距离都取 1 位小数），
 // 不是「卡片是否显示提示」；同址/地名兜底 <3 km 也要能锚定数据里的距离。
 check('⑥回测：距离校验对任意命中都取 1 位小数（不再以 3 km 为门槛）',

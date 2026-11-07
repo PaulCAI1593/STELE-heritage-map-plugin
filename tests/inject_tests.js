@@ -117,6 +117,8 @@ const docEls = { body: new El('body') };
 global.document = {
   body: docEls.body,
   createElement: (t) => new El(t),
+  // #68：警示块用内联 SVG（三角叹号），假 DOM 也要支持命名空间建元素
+  createElementNS: (ns, t) => new El(t),
   createTextNode: (t) => ({ nodeType: 3, textContent: t }),
   getElementById(id) {
     const walk = (n) => {
@@ -773,7 +775,15 @@ function resetDoc() {
       exact.notes.length === 1 && exact.notes[0].attrs['data-hmp-note'] === 'drift',
       JSON.stringify(exact.notes.map(n => n.attrs['data-hmp-note'])));
     check('exact 6.7 km：文案为偏差提示',
-      exact.text.includes('同名地点，坐标偏差约 6.7 公里（位置以点位地址为准）'), exact.text.slice(0, 200));
+      exact.text.includes('同名地点，坐标偏差约 6.7 公里') && exact.text.includes('位置以点位地址为准'), exact.text.slice(0, 200));
+    check('exact 6.7 km：警示块结构 .hmp-alert[role=note] + SVG 图标 + 标题/副行',
+      exact.notes[0].className === 'hmp-alert' && exact.notes[0].attrs.role === 'note' &&
+      exact.notes[0].children.some(c => c.tagName === 'SVG' && /hmp-alert-ic/.test(c.className)) &&
+      exact.notes[0].children.some(c => c.className === 'hmp-alert-body' &&
+        c.children.some(p => p.className === 'hmp-alert-title') &&
+        c.children.some(p => p.className === 'hmp-alert-sub')),
+      JSON.stringify((exact.notes[0].children || []).map(c => c.className + '/' + c.tagName)));
+    check('exact 6.7 km：警示块不用 emoji', !/[\u26A0\u2757\u26A1]/.test(exact.text), exact.text.slice(0, 120));
     check('exact 6.7 km：不出通用距离提示（不重复）',
       exact.notes.length === 1 && !exact.text.includes('请核对是否同一处'), exact.text.slice(0, 200));
 
@@ -782,7 +792,10 @@ function resetDoc() {
       far.notes.length === 1 && far.notes[0].attrs['data-hmp-note'] === 'distance',
       JSON.stringify(far.notes.map(n => n.attrs['data-hmp-note'])));
     check('非 exact 3.4 km：文案为核对提示',
-      far.text.includes('该地点距点位约 3.4 公里，请核对是否同一处'), far.text.slice(0, 220));
+      far.text.includes('该地点距点位约 3.4 公里') && far.text.includes('请核对是否同一处'), far.text.slice(0, 220));
+    check('非 exact 3.4 km：警示块 data-hmp-note=distance 且结构一致',
+      far.notes[0].className === 'hmp-alert' && far.notes[0].children.some(c => c.tagName === 'SVG'),
+      JSON.stringify((far.notes[0].children || []).map(c => c.className + '/' + c.tagName)));
     check('非 exact 3.4 km：不出偏差文案',
       !far.text.includes('同名地点，坐标偏差约'), far.text.slice(0, 220));
 
@@ -801,7 +814,7 @@ function resetDoc() {
       weak.notes.length === 1 && weak.notes[0].attrs['data-hmp-note'] === 'distance',
       JSON.stringify(weak.notes.map(n => n.attrs['data-hmp-note'])));
     check('地名兜底 328 m：文案为「约 0.3 公里，请核对是否同一处」',
-      weak.text.includes('该地点距点位约 0.3 公里，请核对是否同一处'), weak.text.slice(0, 240));
+      weak.text.includes('该地点距点位约 0.3 公里') && weak.text.includes('请核对是否同一处'), weak.text.slice(0, 240));
     check('地名兜底 328 m：不出偏差文案',
       !weak.text.includes('同名地点，坐标偏差约'), weak.text.slice(0, 240));
 

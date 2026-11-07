@@ -72,12 +72,51 @@
   color: #6b6b6b;
 }
 
-/* #24 同名地点坐标偏差小字：12px，#707070（对比度 4.95:1） */
-#hmp-opening-card .hmp-sub-note.hmp-drift-note {
-  margin: 4px 0 0;
+/* #68 卡片警示块：距离/坐标偏差 与 可能未开放 共用同一组件（浅黄底 + 左橙条 + 三角叹号） */
+#hmp-opening-card .hmp-alert {
+  display: flex;
+  gap: 7px;
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border-radius: 4px;
   font-size: 12px;
-  line-height: 1.5;
-  color: #707070;
+  line-height: 1.6;
+  color: #7A4A00;
+  background: #FFF6E8;
+  border-left: 3px solid #D98E32;
+}
+
+/* 距离类提示紧跟匹配行，间距按任务书 §一 */
+#hmp-opening-card .hmp-alert[data-hmp-note] {
+  margin: 8px 0 6px;
+}
+
+#hmp-opening-card .hmp-alert-ic {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  color: #B26A00;
+}
+
+#hmp-opening-card .hmp-alert-body {
+  min-width: 0;
+}
+
+#hmp-opening-card .hmp-alert-title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: #7A4A00;
+}
+
+#hmp-opening-card .hmp-alert-sub {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #7A4A00;
+  opacity: .82;
 }
 
 /* 证据行（命中态小字 / 未匹配必显）：12px 也要过 4.5:1 */
@@ -173,15 +212,7 @@
 }
 
 /* ===== 提示条：站点自己的失败语汇（琥珀） ===== */
-#hmp-opening-card .hmp-alert {
-  margin: 0 0 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #8a5a00;
-  background: #fff8e6;
-  border-left: 3px solid #e0a800;
-}
+/* .hmp-alert 已改为 #68 共用警示块（见文件上方定义） */
 
 #hmp-opening-card .hmp-sub-warn { color: #8a5a00; }
 
