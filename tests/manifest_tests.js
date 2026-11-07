@@ -55,4 +55,27 @@ check('源码中出现的地图 API 域都在 host_permissions 内',
 check('host_permissions 不含 stele.geogv.org 之外的站点域',
   !HP.some(h => h.indexOf('stele.geogv.org') >= 0), JSON.stringify(HP));
 
+// #65：MV3 的 web_accessible_resources.matches 只接受 origin 级模式（path 只能是 /*）。
+// 之前写成 *://stele.geogv.org/zhcn/* 让 Chrome 拒绝装载整个扩展。
+const WAR = M.web_accessible_resources || [];
+const ORIGIN_PATTERN = /^(\*|https?|file):\/\/(<all_urls>|[^/]+)\/\*$/;
+const badWar = [];
+for (const entry of WAR) {
+  for (const p of (entry && entry.matches) || []) {
+    if (!ORIGIN_PATTERN.test(p)) badWar.push((entry.resources || []).join(',') + ' => ' + p);
+  }
+}
+check('web_accessible_resources.matches 全部为 origin 级模式（path 只能是 /*）',
+  WAR.length > 0 && badWar.length === 0, badWar.join(' | ') || JSON.stringify(WAR));
+check('WAR 第一组 matches 为 *://stele.geogv.org/*',
+  !!WAR[0] && (WAR[0].matches || []).indexOf('*://stele.geogv.org/*') >= 0,
+  JSON.stringify((WAR[0] && WAR[0].matches) || []));
+check('WAR 仍暴露 content/map-bridge.js（Chrome<111 降级注入需要）',
+  !!WAR[0] && (WAR[0].resources || []).indexOf('content/map-bridge.js') >= 0,
+  JSON.stringify((WAR[0] && WAR[0].resources) || []));
+check('负例：带路径的 WAR 模式必须判失败',
+  ['*://stele.geogv.org/zhcn/*', '*://host/path/*', 'https://host/a/b*'].every(p => !ORIGIN_PATTERN.test(p)) &&
+  ORIGIN_PATTERN.test('*://stele.geogv.org/*') && ORIGIN_PATTERN.test('https://example.com/*'),
+  'validator rejects path patterns');
+
 finish();

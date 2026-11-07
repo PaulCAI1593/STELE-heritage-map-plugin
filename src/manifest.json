@@ -80,7 +80,7 @@
         "content/map-bridge.js"
       ],
       "matches": [
-        "*://stele.geogv.org/zhcn/*"
+        "*://stele.geogv.org/*"
       ]
     }
   ],
