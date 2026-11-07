@@ -12,6 +12,7 @@
   var CMD_EVENT = 'hmp:map-filter';
   var ACK_EVENT = 'hmp:map-filter-ack';
   var READY_EVENT = 'hmp:map-filter-ready';
+  var PING_EVENT = 'hmp:map-filter-ping';
   var TOKEN = 'hmpmf-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
   var DEFAULT_GROUPS = [
     { id: 'g-been', name: '已去', system: true, createdAt: 0 },
@@ -99,6 +100,10 @@
     TOKEN: TOKEN, KEY: KEY, DEFAULT_GROUPS: DEFAULT_GROUPS,
     normalizeLibrary: normalizeLibrary, groupIds: groupIds, computeKids: computeKids,
     countByGroup: countByGroup, freshState: freshState, next: next, buildCommand: buildCommand,
+    // #62 只读调试口（测试用）：桥是否已就位、是否走了降级
+    __bridge: function () {
+      return { seen: bridgeSeen, injectTried: injectTried, usedFallback: usedFallback, pending: !!pending };
+    },
   };
 
   // ---------------------------------------------------------------- 收藏数据
@@ -166,10 +171,17 @@
     } catch (e) {}
   }
 
+  // #62：桥在 document_start 派发的 READY 早于本脚本（document_idle）注册监听，必丢。
+  // 主动 PING 让桥立即回一次 READY，得到「桥已就位」的确定证明。
+  function pingBridge() {
+    try { window.dispatchEvent(new CustomEvent(PING_EVENT, { detail: {} })); } catch (e) {}
+  }
+
   function scheduleCheck() {
     clearTimeout(timer);
     timer = setTimeout(function () {
       if (!pending) return;
+      if (!bridgeSeen) pingBridge();   // #62 兜底：ACK 丢了也先要一次「桥就位」证明（同步返回）
       if (bridgeSeen && !usedFallback) { pending = null; return; }   // 桥在，ack 可能迟到/丢失，不打扰用户
       if (injectTried) {
         pending = null;
@@ -383,6 +395,8 @@
     if (pending && d.cmd === pending.cmd) pending = null;
   });
   window.addEventListener(READY_EVENT, function () { bridgeSeen = true; });
+  // #62：监听已就位，马上 ping 一次（桥在 MAIN world 的 document_start 一定先于本脚本）
+  pingBridge();
 
   function boot() {
     if (!buildUi()) return;                  // 无 DOM（测试/异常环境）时只保留 core

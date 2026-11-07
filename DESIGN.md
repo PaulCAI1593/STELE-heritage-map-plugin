@@ -518,6 +518,8 @@ heritage-map-plugin/
 │   │   ├── card.js          三路检索 + 印证分级 + 卡片 DOM 注入
 │   │   ├── content.js       路由识别与派发（URL 兜底 + 时序防抖）
 │   │   ├── content.css      卡片补充样式（主体复用站点样式类）
+│   │   ├── map-bridge.js    MAIN world 桥（document_start）：拦截 mapboxgl 拿实例，按 kid 过滤文保图层
+│   │   ├── map-filter.js    isolated：右下角「只显示收藏」按钮 + 收藏分组面板（Shadow DOM）
 │   │   └── apis/
 │   │       ├── amap.js      高德 v5 place/text + place/around
 │   │       └── baidu.js     百度 place/v2/search（行政区 + 圆形区域）
@@ -528,7 +530,7 @@ heritage-map-plugin/
 │   ├── background/          MV3 service worker（缓存清理、跨域代理、点图标开独立小窗）
 │   ├── icons/               PNG 图标（16/32/48/128，由 tools/make-icons.js 生成）
 │   └── LICENSE
-├── tests/                   回归测试（npm test，共 1349 项检查 = 36 套 1334 项 + 点位切换 15 项）
+├── tests/                   回归测试（npm test，共 1419 项检查 = 37 套 1404 项 + 点位切换 15 项）
 │   ├── fixtures/            22 个真实点位的 feature 响应 + picks.json
 │   ├── run_tests.js         16 个文保单位匹配测试
 │   ├── baidu_parity_tests.js 百度侧全链路 + 跨数据源决策一致性矩阵

@@ -15,6 +15,7 @@
   var CMD_EVENT = 'hmp:map-filter';
   var ACK_EVENT = 'hmp:map-filter-ack';
   var READY_EVENT = 'hmp:map-filter-ready';
+  var PING_EVENT = 'hmp:map-filter-ping';
   var VILLAGE_LAYER = 'hc_traditional_village';
   var LAYER_PREFIX = 'hc_site';
   var MAX_INSTANCES = 8;
@@ -24,6 +25,7 @@
   var boundToken = null;     // 首个合法命令的 token 绑定本页
   var wrapped = null;        // 当前包过的 mapboxgl
   var installed = false;
+  var pings = 0;             // 收到 filter 侧 PING 的次数（#62）
 
   function matchLayer(id) {
     if (typeof id !== 'string') return false;
@@ -131,6 +133,13 @@
     } catch (e) {}
   }
 
+  // #62：本文件在 document_start 就跑，当时 filter（document_idle）还没注册监听，
+  // 一次性 READY 会丢。filter 就绪后主动发 PING，这里立即回 READY，
+  // 让「桥已就位」在真实时序下必达（不再只依赖 ACK）。
+  function announceReady() {
+    try { window.dispatchEvent(new CustomEvent(READY_EVENT, { detail: { pings: pings } })); } catch (e) {}
+  }
+
   function onCommand(ev) {
     var d = ev && ev.detail;
     if (!d || (d.cmd !== 'apply' && d.cmd !== 'clear')) return;
@@ -153,7 +162,13 @@
 
   install();
   try { window.addEventListener(CMD_EVENT, onCommand); } catch (e) {}
-  try { window.dispatchEvent(new CustomEvent(READY_EVENT, { detail: {} })); } catch (e) {}
+  try {
+    window.addEventListener(PING_EVENT, function () {
+      pings += 1;
+      announceReady();
+    });
+  } catch (e) {}
+  announceReady();   // 保留一次性派发（桥晚于 filter 加载时仍能用）
 
   // 只读调试口（证据脚本 / 排障用），不改变站点行为
   try {
@@ -163,6 +178,7 @@
       instances: function () { return instances.slice(); },
       state: function () { return state ? { kids: state.kids.slice(), token: state.token } : null; },
       installed: function () { return installed; },
+      pings: function () { return pings; },
     };
   } catch (e) {}
 })();

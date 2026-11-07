@@ -2,6 +2,30 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] — 2026-11-07
+
+### 地图「只显示收藏」（新）
+
+- **按收藏分组过滤地图点位**：站点页面右下角（「图例」上方）新增「只显示收藏」按钮。点击进入过滤模式并展开分组面板，默认勾选全部收藏分组，立即只显示这些分组里的文保点位。
+- **分组独立开关**：面板里每个收藏分组（「已去」「想去」及自定义组）可单独开关，实时生效；全部分组关闭时文保点位全部隐藏（只剩底图），面板提示「未选择分组」。
+- **再点按钮还原**：过滤状态下再点一次按钮即还原全部点位（不论面板当时展开还是收起）；点面板外或按 Esc 只收起面板，不退出过滤。
+- 收藏为空时面板显示空态；过滤状态不持久化，刷新页面回到默认（不过滤）。
+
+### 实现
+
+- `src/content/map-bridge.js`（MAIN world / `document_start`）拦截 `window.mapboxgl`，用 Proxy 包装 `Map` 构造拿到地图实例；对全部 `^hc_site*` 图层与 `hc_traditional_village` 同时按收藏的 `kid` 设置 filter，`style.load` 后与新实例都会补设；还原时置回 `null`。
+- `src/content/map-filter.js`（isolated）用 Shadow DOM 渲染按钮与分组面板，读本地收藏 `hmp:favorites:v1`，取勾选分组的 `steleId` 并集。
+- 桥与过滤脚本通过 CustomEvent 通信并带每页随机 token；未新增任何权限，不改收藏 schema。
+- `manifest.json` 增 `minimum_chrome_version: "111"`（`world:"MAIN"` 所需）；Chrome 111 以下降级为 `<script>` 注入桥，仍拿不到地图实例时给出提示，不静默失效。
+
+### 修复
+
+- **READY 事件时序**：桥在 `document_start` 一次性派发的 `hmp:map-filter-ready` 早于过滤脚本（`document_idle`）注册监听而丢失，此前只靠 ACK 置位；改为过滤脚本注册监听后主动 PING、桥立即回 READY，ACK 丢失时也不会误报「当前浏览器版本不支持地图过滤」。
+
+### 未验证
+
+- 真机未验证：真实 Chrome 安装扩展后的 MAIN world 注入、真实图层过滤效果、面板交互与对比度。
+
 ## [0.5.3] — 2026-11-06
 
 ### WebDAV 同步（新）

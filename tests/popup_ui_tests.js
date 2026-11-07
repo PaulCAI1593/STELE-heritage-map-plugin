@@ -64,10 +64,10 @@ console.log('\n=== 结构：状态带、行内测试、主题开关、页脚 ===
 }
 
 // ---------------- 3. 版本三处一致 ----------------
-console.log('\n=== 版本 0.5.3 同步 ===');
+console.log('\n=== 版本 0.6.0 同步 ===');
 {
-  check('manifest.json 版本 = 0.5.3', manifest.version === '0.5.3', manifest.version);
-  check('package.json 版本 = 0.5.3', pkg.version === '0.5.3', pkg.version);
+  check('manifest.json 版本 = 0.6.0', manifest.version === '0.6.0', manifest.version);
+  check('package.json 版本 = 0.6.0', pkg.version === '0.6.0', pkg.version);
   check('popup 显示版本读 manifest（无硬编码 v0.3）', !/v0\.3\.10/.test(html + js));
 }
 

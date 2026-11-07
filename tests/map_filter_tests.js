@@ -210,6 +210,36 @@ check('桥回 ack {token, cmd, ok, instances}',
   acks.length === 1 && acks[0].token === 'tok-1' && acks[0].cmd === 'apply' && acks[0].ok === true &&
   acks[0].instances === 2, JSON.stringify(acks[0]));
 
+// ---------------- 2b. READY 时序（#62 D-171） ----------------
+// 真实顺序：桥在 MAIN world 的 document_start 先跑并派发 READY；filter 到 document_idle 才注册监听。
+// 修法：filter 注册完监听主动 PING，桥立即回 READY —— 这条通道在真实时序下必达。
+const orderCtx = makeBridgeSandbox();
+vm.runInContext(bridgeSrc, orderCtx, { filename: 'content/map-bridge.js' });
+vm.runInContext(filterSrc, orderCtx, { filename: 'content/map-filter.js' });
+const orderBridge = orderCtx.window.HMP.mapFilter.__bridge();
+check('#62 桥先加载、filter 后加载：bridgeSeen 最终为 true（PING → READY）',
+  orderBridge.seen === true, JSON.stringify(orderBridge));
+check('#62 PING 必达：桥收到 filter 的 ping 至少 1 次',
+  orderCtx.window.__HMP_MAP_BRIDGE__.pings() >= 1,
+  String(orderCtx.window.__HMP_MAP_BRIDGE__.pings()));
+check('#62 不误报「不支持」：未触发降级注入',
+  orderBridge.injectTried === false && orderBridge.usedFallback === false, JSON.stringify(orderBridge));
+
+// 反向顺序保留：桥晚于 filter 时，一次性 READY 仍能把 bridgeSeen 置真
+const revCtx = makeSandbox();
+vm.runInContext(filterSrc, revCtx, { filename: 'content/map-filter.js' });
+const revBefore = revCtx.window.HMP.mapFilter.__bridge();
+vm.runInContext(bridgeSrc, revCtx, { filename: 'content/map-bridge.js' });
+const revAfter = revCtx.window.HMP.mapFilter.__bridge();
+check('#62 桥晚于 filter 加载：一次性 READY 仍置 bridgeSeen（旧通道未破坏）',
+  revBefore.seen === false && revAfter.seen === true,
+  JSON.stringify([revBefore, revAfter]));
+
+check('#62 静态：桥监听 hmp:map-filter-ping，filter 在监听后主动 ping',
+  bridgeSrc.indexOf('hmp:map-filter-ping') >= 0 &&
+  filterSrc.indexOf("addEventListener(READY_EVENT") >= 0 &&
+  filterSrc.lastIndexOf('pingBridge();') > filterSrc.indexOf("addEventListener(READY_EVENT"));
+
 // ---------------- 3. manifest ----------------
 check('manifest minimum_chrome_version = 111（world:"MAIN" 需要）', M.minimum_chrome_version === '111');
 const MAIN_CS = (M.content_scripts || []).filter(c => c.world === 'MAIN');
