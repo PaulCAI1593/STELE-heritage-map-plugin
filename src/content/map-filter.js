@@ -19,6 +19,9 @@
     { id: 'g-want', name: '想去', system: true, createdAt: 1 },
   ];
   var BRIDGE_TIMEOUT = 600;
+  var FALLBACK_RIGHT = 10;      // #63 量不到站点「图例」时的兜底定位
+  var FALLBACK_BOTTOM = 76;
+  var LEGEND_GAP = 8;           // 按钮底边与图例顶边的间隙
 
   // ---------------------------------------------------------------- 纯逻辑
   // 兼容 store.read() 的输出与 raw storage 值（schema 1/2）
@@ -96,10 +99,29 @@
     return { state: s, effect: null };
   }
 
+  // 面板脚注：已选组数 / 总组数 / 选中点位（同一 steleId 去重）
+  function summary(lib, checkedIds) {
+    var ids = groupIds(lib);
+    var checked = (checkedIds || []).filter(function (id) { return ids.indexOf(id) >= 0; });
+    return { selectedGroups: checked.length, totalGroups: ids.length, points: computeKids(lib, checked).length };
+  }
+
+  // #63 定位：按钮底边 = 站点「图例」顶边 - LEGEND_GAP，右边缘与图例右边缘对齐；量不到回退。
+  function positionFor(legend, vw, vh) {
+    var w = Number(vw) || 0, h = Number(vh) || 0;
+    if (!legend || !w || !h) return { right: FALLBACK_RIGHT, bottom: FALLBACK_BOTTOM };
+    return {
+      right: Math.max(0, Math.round((w - legend.right) * 10) / 10),
+      bottom: Math.max(0, Math.round((h - legend.top + LEGEND_GAP) * 10) / 10),
+    };
+  }
+
   var core = {
     TOKEN: TOKEN, KEY: KEY, DEFAULT_GROUPS: DEFAULT_GROUPS,
     normalizeLibrary: normalizeLibrary, groupIds: groupIds, computeKids: computeKids,
-    countByGroup: countByGroup, freshState: freshState, next: next, buildCommand: buildCommand,
+    countByGroup: countByGroup, summary: summary, positionFor: positionFor,
+    FALLBACK: { right: FALLBACK_RIGHT, bottom: FALLBACK_BOTTOM, gap: LEGEND_GAP },
+    freshState: freshState, next: next, buildCommand: buildCommand,
     // #62 只读调试口（测试用）：桥是否已就位、是否走了降级
     __bridge: function () {
       return { seen: bridgeSeen, injectTried: injectTried, usedFallback: usedFallback, pending: !!pending };
@@ -211,26 +233,40 @@
   var state = freshState();
   var lib = normalizeLibrary(null);
 
+  // #63 造型按 `02-design/总监-0.6.0-地图控件/mock.html`；文字色在 mock 基础上加深，
+  // 以满足验收的对比度 ≥4.5（#8A8F98 → #6B7079 = 4.98，#9AA0A6 → #70757D = 4.64）。
   var CSS = [
-    ':host{all:initial;position:fixed;right:12px;bottom:64px;z-index:30;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;color:#333;line-height:1.4}',
-    '.wrap{position:relative;display:block}',
-    '.panel{position:absolute;right:0;bottom:44px;width:224px;box-sizing:border-box;padding:8px;background:#fff;border:1px solid #d8d8d8;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);opacity:0;transform:translateY(4px);visibility:hidden;pointer-events:none;transition:opacity .12s ease,transform .12s ease}',
-    '.panel.is-open{opacity:1;transform:none;visibility:visible;pointer-events:auto}',
-    '.ptitle{font-size:12px;color:#6f6f6f;padding:2px 8px 6px}',
-    '.row{display:flex;align-items:center;gap:8px;height:40px;box-sizing:border-box;padding:0 8px;border-radius:4px;cursor:pointer;font-size:13px;color:#333}',
-    '.row:hover{background:#f4f4f4}',
-    '.row input{width:16px;height:16px;margin:0;flex:0 0 auto;cursor:pointer;accent-color:#2f2f2f}',
-    '.row input:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}',
+    ':host{all:initial;position:fixed;right:10px;bottom:76px;z-index:30;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;color:#2B3035;line-height:1.4}',
+    '.wrap{display:flex;flex-direction:column;align-items:flex-end;gap:8px}',
+    '.panel{display:none;width:232px;box-sizing:border-box;padding:6px 6px 0;background:#fff;border-radius:8px;box-shadow:0 0 0 1px rgba(0,0,0,.07),0 8px 24px rgba(0,0,0,.14)}',
+    '.panel.is-open{display:block;animation:hmp-mf-in .14s ease-out}',
+    '@keyframes hmp-mf-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}',
+    '@media (prefers-reduced-motion: reduce){.panel.is-open{animation:none}}',
+    '.ptitle{padding:7px 10px 3px;font-size:11.5px;font-weight:600;letter-spacing:.06em;color:#6B7079}',
+    '.row{position:relative;display:flex;align-items:center;gap:9px;height:38px;box-sizing:border-box;padding:0 10px;border-radius:5px;cursor:pointer;font-size:13px;color:#2B3035}',
+    '.row:hover{background:#F5F5F4}',
+    '.row input{position:absolute;width:1px;height:1px;margin:0;opacity:0;pointer-events:none}',
+    '.box{width:16px;height:16px;box-sizing:border-box;border:1.5px solid #C2C6CC;border-radius:4px;background:#fff;flex:0 0 auto;position:relative}',
+    '.row input:checked + .box{background:#2B3035;border-color:#2B3035}',
+    '.row input:checked + .box::after{content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:8px;border:solid #fff;border-width:0 1.7px 1.7px 0;transform:rotate(45deg)}',
+    '.row input:focus-visible + .box{outline:2px solid #1F5FA8;outline-offset:2px}',
     '.gname{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-    '.gcount{flex:0 0 auto;font-size:12px;color:#6f6f6f}',
-    '.hint{font-size:12px;color:#6f6f6f;line-height:1.6;padding:6px 8px}',
-    '.hint span{display:block;color:#6f6f6f}',
-    '.btn{display:flex;align-items:center;gap:6px;height:36px;box-sizing:border-box;padding:0 12px;background:#fff;border:1px solid #d8d8d8;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.16);color:#333;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit}',
-    '.btn:hover{background:#f6f6f6}',
-    '.btn:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}',
-    '.btn.is-on{background:#2f2f2f;border-color:#2f2f2f;color:#fff}',
-    '.btn svg{width:16px;height:16px;flex:0 0 auto}',
-    '@media (prefers-reduced-motion: reduce){.panel{transition:opacity .12s ease;transform:none}}',
+    '.gcount{flex:0 0 auto;font-size:12px;color:#70757D;font-variant-numeric:tabular-nums}',
+    '.pfoot{display:flex;justify-content:space-between;gap:8px;margin:4px -6px 0;padding:8px 12px;border-top:1px solid #EFEFED;font-size:11.5px;color:#6B7079}',
+    '.pfoot[hidden]{display:none}',
+    '.pfoot b{font-weight:600;color:#5F6469}',
+    '.pfoot .pts.is-none{color:#B23A2E}',
+    '.hint{font-size:12.5px;color:#6B7079;line-height:1.6;padding:14px 12px 16px;text-align:center}',
+    '.hint span{display:block}',
+    '.hint[hidden]{display:none}',
+    '.btn{display:flex;align-items:center;gap:6px;height:36px;box-sizing:border-box;padding:0 12px;background:#fff;border:0;border-radius:4px;box-shadow:0 0 0 1px rgba(0,0,0,.10),0 1px 3px rgba(0,0,0,.10);color:#2B3035;font-family:inherit;font-size:13px;font-weight:500;line-height:1;cursor:pointer}',
+    '.btn:hover{background:#F6F6F5}',
+    '.btn:focus-visible{outline:2px solid #1F5FA8;outline-offset:2px}',
+    '.btn.is-on{background:#2B3035;color:#fff;box-shadow:0 0 0 1px #2B3035,0 1px 3px rgba(0,0,0,.18)}',
+    '.btn.is-on:hover{background:#2B3035}',
+    '.btn svg{width:15px;height:15px;flex:0 0 auto}',
+    '.badge{display:none;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:9px;background:rgba(255,255,255,.18);color:#fff;font-size:11px;font-weight:600;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}',
+    '.btn.is-on .badge{display:inline-block}',
   ].join('\n');
 
   function el(tag, cls, text) {
@@ -256,6 +292,38 @@
       svg.appendChild(p);
     });
     return svg;
+  }
+
+  // #63：量站点右下角「图例」按钮（文本含「图例」、贴右下、可见），用于按钮对齐定位。
+  function findLegend() {
+    try {
+      if (!document || typeof document.querySelectorAll !== 'function') return null;
+      var nodes = document.querySelectorAll('button,[role="button"],a,div,span');
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      var best = null;
+      for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (UI && n === UI.host) continue;
+        var t = (n.textContent || '').trim();
+        if (!t || t.length > 12 || t.indexOf('图例') < 0) continue;
+        var r = n.getBoundingClientRect();
+        if (r.width < 30 || r.width > 220 || r.height < 24 || r.height > 56) continue;
+        if (r.right < vw * 0.6 || r.top < vh * 0.7) continue;
+        if (best && !(t.length < best.len || (t.length === best.len && r.right > best.rect.right))) continue;
+        best = { len: t.length, rect: r };
+      }
+      return best ? best.rect : null;
+    } catch (e) { return null; }
+  }
+
+  function positionUi() {
+    if (!UI) return null;
+    var legend = findLegend();
+    var pos = positionFor(legend, window.innerWidth, window.innerHeight);
+    UI.host.style.right = pos.right + 'px';
+    UI.host.style.bottom = pos.bottom + 'px';
+    return { legend: legend, position: pos };
   }
 
   function buildUi() {
@@ -284,9 +352,20 @@
     empty.appendChild(el('span', null, '先在地图详情页收藏点位'));
     empty.hidden = true;
     panel.appendChild(empty);
-    var none = el('div', 'hint', '未选择分组');
-    none.hidden = true;
-    panel.appendChild(none);
+
+    // #63 脚注：左「已选 X/Y 组」，右「共 N 个点位」；N=0 时右侧写「未选择分组」
+    var pfoot = el('div', 'pfoot');
+    var selText = el('span', 'sel');
+    selText.appendChild(document.createTextNode('已选 '));
+    var selB = el('b');
+    selText.appendChild(selB);
+    selText.appendChild(document.createTextNode(' 组'));
+    var ptsText = el('span', 'pts');
+    var ptsB = el('b');
+    pfoot.appendChild(selText);
+    pfoot.appendChild(ptsText);
+    panel.appendChild(pfoot);
+
     var notice = el('div', 'hint');
     notice.hidden = true;
     panel.appendChild(notice);
@@ -297,14 +376,23 @@
     btn.setAttribute('aria-controls', 'hmp-mf-panel');
     btn.setAttribute('aria-pressed', 'false');
     btn.appendChild(svgIcon());
-    btn.appendChild(el('span', null, '只显示收藏'));
+    btn.appendChild(el('span', 'label', '只显示收藏'));
+    var badge = el('span', 'badge', '0');   // #63 选中点位数（仅 on 态显示）
+    badge.setAttribute('aria-hidden', 'true');
+    btn.appendChild(badge);
 
     wrap.appendChild(panel);
     wrap.appendChild(btn);
     root.appendChild(wrap);
     document.body.appendChild(host);
 
-    UI = { host: host, root: root, btn: btn, panel: panel, rows: rows, empty: empty, none: none, notice: notice };
+    UI = { host: host, root: root, btn: btn, badge: badge, panel: panel, rows: rows, empty: empty,
+      pfoot: pfoot, selB: selB, pts: ptsText, ptsB: ptsB, notice: notice };
+
+    // #63 定位：贴合站点「图例」按钮（同一右缘、其上 8px）；量不到用 CSS 兜底值。
+    positionUi();
+    window.addEventListener('resize', positionUi);
+    [0, 600, 1500].forEach(function (d) { setTimeout(positionUi, d); });
 
     btn.addEventListener('click', function () { dispatch({ type: 'button' }); });
     document.addEventListener('pointerdown', function (e) {
@@ -322,14 +410,16 @@
   function render() {
     if (!UI) return;
     var on = state.mode === 'on';
+    var hasItems = lib.items.length > 0;
+    var sum = summary(lib, state.checked);
     UI.btn.classList.toggle('is-on', on);
     UI.btn.setAttribute('aria-expanded', String(state.panelOpen));
     UI.btn.setAttribute('aria-pressed', String(on));
+    UI.badge.textContent = String(sum.points);
     UI.panel.classList.toggle('is-open', state.panelOpen);
     UI.panel.setAttribute('aria-hidden', String(!state.panelOpen));
 
     UI.rows.textContent = '';
-    var hasItems = lib.items.length > 0;
     UI.empty.hidden = hasItems;
     UI.rows.hidden = !hasItems;
     if (hasItems) {
@@ -341,12 +431,27 @@
         cb.checked = state.checked.indexOf(g.id) >= 0;
         cb.addEventListener('change', function () { dispatch({ type: 'toggle-group', id: g.id }); });
         row.appendChild(cb);
+        row.appendChild(el('span', 'box'));   // #63 自绘勾选框（原生 input 视觉隐藏，保留可访问性）
         row.appendChild(el('span', 'gname', g.name));
         row.appendChild(el('span', 'gcount', String(counts[g.id] || 0)));
         UI.rows.appendChild(row);
       });
     }
-    UI.none.hidden = !(on && hasItems && state.checked.length === 0);
+
+    // 脚注：已选 X/Y 组 + 共 N 个点位（N=0 显示「未选择分组」）
+    UI.pfoot.hidden = !hasItems;
+    UI.selB.textContent = sum.selectedGroups + '/' + sum.totalGroups;
+    UI.pts.textContent = '';
+    UI.pts.className = 'pts';
+    if (sum.points === 0) {
+      UI.pts.textContent = '未选择分组';
+      UI.pts.className = 'pts is-none';
+    } else {
+      UI.pts.appendChild(document.createTextNode('共 '));
+      UI.pts.appendChild(UI.ptsB);
+      UI.ptsB.textContent = String(sum.points);
+      UI.pts.appendChild(document.createTextNode(' 个点位'));
+    }
     if (on && !hasItems && !UI.notice.textContent) UI.notice.hidden = true;
   }
 

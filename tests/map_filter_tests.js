@@ -240,6 +240,79 @@ check('#62 静态：桥监听 hmp:map-filter-ping，filter 在监听后主动 pi
   filterSrc.indexOf("addEventListener(READY_EVENT") >= 0 &&
   filterSrc.lastIndexOf('pingBridge();') > filterSrc.indexOf("addEventListener(READY_EVENT"));
 
+// ---------------- 2c. #63 视觉与定位（面板脚注 / 图例对齐 / 造型令牌） ----------------
+const SUM_ALL = core.summary(LIB, core.groupIds(LIB));
+check('#63 脚注汇总：全选 3/3 组、4 个点位',
+  SUM_ALL.selectedGroups === 3 && SUM_ALL.totalGroups === 3 && SUM_ALL.points === 4, JSON.stringify(SUM_ALL));
+const SUM_ONE = core.summary(LIB, ['g-been']);
+check('#63 脚注汇总：只选「已去」→ 1/3 组、1 个点位',
+  SUM_ONE.selectedGroups === 1 && SUM_ONE.totalGroups === 3 && SUM_ONE.points === 1, JSON.stringify(SUM_ONE));
+const SUM_NONE = core.summary(LIB, []);
+check('#63 脚注汇总：全不选 → 0/3 组、0 个点位（右侧显示未选择分组）',
+  SUM_NONE.selectedGroups === 0 && SUM_NONE.totalGroups === 3 && SUM_NONE.points === 0, JSON.stringify(SUM_NONE));
+check('#63 脚注汇总：未知分组不计入已选',
+  core.summary(LIB, ['nope']).selectedGroups === 0);
+
+// 定位：按钮底边 = 图例顶边 - 8，右缘对齐；1440×900 与 1280×800 各验一次
+const POS_1440 = core.positionFor({ right: 1434, top: 833 }, 1440, 900);
+check('#63 定位 1440×900：右缘与图例对齐（right=6）、间隙 8px（bottom=75）',
+  POS_1440.right === 6 && POS_1440.bottom === 75, JSON.stringify(POS_1440));
+check('#63 定位 1440×900：按钮底边 = 900-75 = 825，距图例顶 833 为 8px',
+  900 - POS_1440.bottom === 825 && 833 - (900 - POS_1440.bottom) === 8);
+const POS_1280 = core.positionFor({ right: 1274, top: 733 }, 1280, 800);
+check('#63 定位 1280×800：right=6、bottom=75（同样对齐与 8px 间隙）',
+  POS_1280.right === 6 && POS_1280.bottom === 75, JSON.stringify(POS_1280));
+check('#63 量不到图例时回退 right:10 / bottom:76',
+  core.positionFor(null, 1440, 900).right === 10 && core.positionFor(null, 1440, 900).bottom === 76 &&
+  core.FALLBACK.right === 10 && core.FALLBACK.bottom === 76 && core.FALLBACK.gap === 8);
+
+// 造型令牌（照任务书 §二，静态核对）
+const cssTokens = [
+  ['面板宽 232', 'width:232px'],
+  ['面板圆角 8', 'border-radius:8px'],
+  ['行高 38', 'height:38px'],
+  ['按钮高 36', 'height:36px'],
+  ['按钮圆角 4', 'border-radius:4px'],
+  ['按钮 off 描边/阴影', 'box-shadow:0 0 0 1px rgba(0,0,0,.10),0 1px 3px rgba(0,0,0,.10)'],
+  ['激活底色 #2B3035', '#2B3035'],
+  ['计数徽标 .badge', '.badge'],
+  ['徽标仅 on 态显示', '.btn.is-on .badge'],
+  ['面板脚注 .pfoot', '.pfoot'],
+  ['未选择分组红色 #B23A2E', '#B23A2E'],
+  ['自绘勾选框 .box', '.box'],
+  ['原生 input 视觉隐藏', 'opacity:0'],
+  ['reduced-motion 处理', 'prefers-reduced-motion'],
+  ['兜底定位 right:10px;bottom:76px', 'right:10px;bottom:76px'],
+];
+cssTokens.forEach(([label, token]) => check(`#63 CSS：${label}`, filterSrc.indexOf(token) >= 0, token));
+
+const jsTokens = [
+  ['按钮文案', '只显示收藏'],
+  ['脚注左「已选」', "createTextNode('已选 ')"] ,
+  ['脚注右「共」', "createTextNode('共 ')"],
+  ['脚注单位「个点位」', '个点位'],
+  ['全不选文案', '未选择分组'],
+  ['定位函数 positionFor', 'function positionFor'],
+  ['量图例 findLegend', 'function findLegend'],
+  ['resize 重量', "addEventListener('resize', positionUi)"],
+];
+jsTokens.forEach(([label, token]) => check(`#63 JS：${label}`, filterSrc.indexOf(token) >= 0, token));
+
+// 对比度：正文/标题/计数/脚注在 #fff 上 ≥ 4.5（负例：mock 原色 #8A8F98=3.25、#9AA0A6=2.64 不达标）
+function relLum(hex) {
+  const c = hex.replace('#', '').match(/../g).map(x => parseInt(x, 16) / 255)
+    .map(v => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+const contrast = hex => (1.05) / (relLum(hex) + 0.05);
+const CONTRAST_TOKENS = { 组名: '#2B3035', 标题脚注: '#6B7079', 计数: '#70757D', 未选择: '#B23A2E', 脚注粗体: '#5F6469' };
+Object.keys(CONTRAST_TOKENS).forEach(label => {
+  const c = contrast(CONTRAST_TOKENS[label]);
+  check(`#63 对比度：${label} ${CONTRAST_TOKENS[label]} = ${c.toFixed(2)} ≥ 4.5`, c >= 4.5, c.toFixed(2));
+});
+check('#63 负例：mock 原色 #9AA0A6 对比度不足（<4.5），确认加深是必要的', contrast('#9AA0A6') < 4.5);
+check('#63 负例：mock 原色 #8A8F98 对比度不足（<4.5），确认加深是必要的', contrast('#8A8F98') < 4.5);
+
 // ---------------- 3. manifest ----------------
 check('manifest minimum_chrome_version = 111（world:"MAIN" 需要）', M.minimum_chrome_version === '111');
 const MAIN_CS = (M.content_scripts || []).filter(c => c.world === 'MAIN');

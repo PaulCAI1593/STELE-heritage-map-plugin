@@ -97,7 +97,7 @@ git clone https://github.com/PaulCAI1593/STELE-heritage-map-plugin.git
 
 ## 🛠️ 开发与测试
 
-无需安装依赖，纯 Node 即可跑全部测试（**1419 项检查**：37 套 1404 项 + 点位切换 15 项）：
+无需安装依赖，纯 Node 即可跑全部测试（**1457 项检查**：37 套 1442 项 + 点位切换 15 项）：
 
 ```bash
 npm test                 # 全部
