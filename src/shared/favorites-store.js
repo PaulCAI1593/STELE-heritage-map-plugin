@@ -46,6 +46,101 @@
     return queued;
   }
 
+  // #74：writeChain 只是本上下文内的队列。弹窗、详情卡片、多个标签页各自持有一份
+  // store，同时「回读-改-写」时后写者的快照可能更早，整条 items 会被覆盖（丢一条）。
+  // 解法：写入优先交给 service worker（唯一写者，队列里按 op+args 对最新库重放）；
+  // 发送失败 / 无 runtime / 800ms 超时 → 退回本地直写（保留原有语义）。
+  // 返回值额外带 via（'sw' | 'local'），其余字段与原来一致。
+  const SW_TYPE = 'hmp:fav';
+  const SW_TIMEOUT_MS = 800;
+  let swSeq = 0;
+
+  /** SW 自己加载本文件时置位：它就是写者，不能再往自己发消息 */
+  function isSwHost() {
+    return !!window.__HMP_FAV_SW_HOST__;
+  }
+
+  function canUseSw() {
+    if (isSwHost()) return false;
+    const c = window.chrome;
+    return !!(c && c.runtime && c.runtime.id && typeof c.runtime.sendMessage === 'function');
+  }
+
+  /** 发一条写消息；SW 不可用/超时/异常一律 resolve(null) 交给本地兜底 */
+  function swCall(op, args) {
+    return new Promise(resolve => {
+      let settled = false;
+      const timer = setTimeout(() => finish(null), SW_TIMEOUT_MS);
+      function finish(v) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      }
+      const reqId = 'r' + (++swSeq).toString(36);
+      try {
+        window.chrome.runtime.sendMessage({ type: SW_TYPE, op, args, reqId }, res => {
+          const rt = window.chrome.runtime;
+          const err = rt && rt.lastError;
+          if (rt) rt.lastError = null;
+          if (err || !res || res.reqId !== reqId) return finish(null);
+          // 协议层 ok=false 表示 SW 没处理成（store 未加载等）→ 本地兜底；
+          // result.ok=false 是业务失败（重复/上限等），必须原样返回，不能再本地重做一遍。
+          if (!res.ok) return finish(null);
+          finish(res.result || { ok: false, reason: 'sw' });
+        });
+      } catch (e) { finish(null); }
+    });
+  }
+
+  function withVia(res, via) {
+    return Object.assign({}, res || { ok: false, reason: 'storage' }, { via });
+  }
+
+  /** 写后回读校验（双保险）：确认本次变更真的落盘，不一致时调用方会重试一次 */
+  async function verifyWrite(op, args, res) {
+    const lib = await readLibrary();
+    switch (op) {
+      case 'add':
+        return !!res.item && lib.items.some(i => i.steleId === res.item.steleId && i.updatedAt === res.item.updatedAt);
+      case 'remove':
+        if (!res.removed) return true;
+        return !lib.items.some(i => i.steleId === args[0] && (!args[1] || i.groupId === args[1])) &&
+          lib.tombstones.some(t => t.kind === 'item' && t.key === args[0]);
+      case 'move':
+        return lib.items.some(i => i.steleId === args[0] && i.groupId === args[1]);
+      case 'createGroup':
+        return !!res.group && lib.groups.some(g => g.id === res.group.id);
+      case 'renameGroup':
+        return !!res.group && lib.groups.some(g => g.id === args[0] && g.name === res.group.name);
+      case 'deleteGroup':
+        return !lib.groups.some(g => g.id === args[0]);
+      case 'replace':
+        return !!res.library &&
+          lib.items.length === res.library.items.length &&
+          lib.groups.length === res.library.groups.length;
+      default:
+        return true;
+    }
+  }
+
+  /** 本地直写：排队 → 写 → 回读校验；不一致重试一次（最多 2 次） */
+  async function localWrite(op, args) {
+    let res = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await enqueueWrite(() => WRITE_IMPL[op].apply(null, args));
+      if (!res || !res.ok) return withVia(res, 'local');
+      if (await verifyWrite(op, args, res)) return withVia(res, 'local');
+    }
+    return withVia(res, 'local');
+  }
+
+  /** 对外写入口：优先 SW，失败/超时才本地 */
+  function writeOp(op, args) {
+    if (!canUseSw()) return localWrite(op, args);
+    return swCall(op, args).then(res => (res ? withVia(res, 'sw') : localWrite(op, args)));
+  }
+
   function hasStorage() {
     return !!(window.chrome && window.chrome.storage && window.chrome.storage.local);
   }
@@ -403,15 +498,25 @@
     return { ok: true, library: san };
   }
 
-  // #36 P2-2(a)：对外变更接口一律排队。弹出页与内容脚本各自持一份 store，
-  // 同一份里的并发写不再互相覆盖；回调/返回值与排队前一致（成功/失败 reason 原样返回）。
-  function add(item, opts) { return enqueueWrite(() => addNow(item, opts)); }
-  function remove(steleId, groupId) { return enqueueWrite(() => removeNow(steleId, groupId)); }
-  function move(steleId, groupId) { return enqueueWrite(() => moveNow(steleId, groupId)); }
-  function createGroup(name) { return enqueueWrite(() => createGroupNow(name)); }
-  function renameGroup(id, name) { return enqueueWrite(() => renameGroupNow(id, name)); }
-  function deleteGroup(id) { return enqueueWrite(() => deleteGroupNow(id)); }
-  function replace(lib) { return enqueueWrite(() => replaceNow(lib)); }
+  // #74：本地实现表（SW 内与兜底路径共用）与对外入口。
+  // 对外接口语义不变（成功/失败 reason 原样），只多一个 via 字段。
+  const WRITE_IMPL = {
+    add: addNow,
+    remove: removeNow,
+    move: moveNow,
+    createGroup: createGroupNow,
+    renameGroup: renameGroupNow,
+    deleteGroup: deleteGroupNow,
+    replace: replaceNow,
+  };
+
+  function add(item, opts) { return writeOp('add', [item, opts]); }
+  function remove(steleId, groupId) { return writeOp('remove', [steleId, groupId]); }
+  function move(steleId, groupId) { return writeOp('move', [steleId, groupId]); }
+  function createGroup(name) { return writeOp('createGroup', [name]); }
+  function renameGroup(id, name) { return writeOp('renameGroup', [id, name]); }
+  function deleteGroup(id) { return writeOp('deleteGroup', [id]); }
+  function replace(lib) { return writeOp('replace', [lib]); }
 
   async function search(query, scope, groupId) {
     const q = String(query == null ? '' : query).trim().toLowerCase();

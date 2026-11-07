@@ -8,6 +8,51 @@
 
 const CACHE_BASE_PREFIX = 'hmp:cache:';
 
+// ── #74：收藏写入的唯一写者 ──
+// 弹窗、详情卡片、多个标签页各自持有一份 favorites-store 与自己的写队列；
+// 同时「整键回读-改-写」时后写者的快照可能更早，整条 items 会被覆盖（丢一条）。
+// 这里让 SW 成为唯一写者：消息 {type:'hmp:fav', op, args, reqId} 进一条 promise 队列，
+// 按 op + args 对最新库重放。store 代码用 importScripts 复用同一份，不复制逻辑。
+// 先补 self.window 兜住模块里的 window 引用，并置位 __HMP_FAV_SW_HOST__ 让 store
+// 知道自己就是写者（不再往自己发消息）。
+self.window = self;
+self.__HMP_FAV_SW_HOST__ = true;
+try {
+  importScripts('../shared/favorites-store.js');
+} catch (e) {
+  console.error('[HMP] 收藏数据层加载失败', e);
+}
+
+const FAV_MSG_TYPE = 'hmp:fav';
+const FAV_WRITE_OPS = ['add', 'remove', 'move', 'createGroup', 'renameGroup', 'deleteGroup', 'replace'];
+let favQueue = Promise.resolve();
+
+function favStore() {
+  return self.HMP && self.HMP.favoritesStore ? self.HMP.favoritesStore : null;
+}
+
+function runFavOp(msg) {
+  const store = favStore();
+  if (!store) return Promise.resolve({ ok: false, reason: 'store' });
+  const op = msg.op;
+  const args = Array.isArray(msg.args) ? msg.args : [];
+  if (op === 'read') return Promise.resolve(store.read());
+  if (FAV_WRITE_OPS.indexOf(op) < 0) return Promise.resolve({ ok: false, reason: 'op' });
+  // store 在这个上下文里会走本地队列 + 写后回读校验（异常重试一次）
+  return Promise.resolve(store[op].apply(null, args));
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== FAV_MSG_TYPE) return;
+  const job = favQueue.then(() => runFavOp(msg));
+  favQueue = job.then(() => undefined, () => undefined);
+  job.then(
+    result => sendResponse({ reqId: msg.reqId, ok: true, result }),
+    err => sendResponse({ reqId: msg.reqId, ok: false, error: String((err && err.message) || err) })
+  );
+  return true;   // 异步响应
+});
+
 function clearQueryCache(reason) {
   chrome.storage.local.get(null, items => {
     const keys = Object.keys(items || {}).filter(k => k.startsWith(CACHE_BASE_PREFIX));
