@@ -46,8 +46,9 @@ console.log('\n=== 结构：状态带、行内测试、主题开关、页脚 ===
   check('导出决策为次级自适应按钮 .btn-aux',
     /class="[^"]*btn-aux[^"]*"[^>]*id="exportLog"/.test(html));
   check('.btn-aux 宽度自适应（flex:0 0 auto）', /\.btn-aux\{[^}]*flex:0 0 auto/.test(css));
-  check('.band 内边距为 6px 10px', /\.band\{[^}]*padding:6px 10px/.test(css));
-  check('页脚底部留白 >=10px（margin-bottom 12px 留余量）', /\.hmp-foot\{[^}]*margin:0 12px 12px/.test(css));
+  check('#64 状态带内边距 8px 10px（标题 13 / 副文 12）', /\.band\{[^}]*padding:8px 10px/.test(css) &&
+  /\.band-t\{[^}]*font-size:13px/.test(css) && /\.band-b\{[^}]*font-size:12px/.test(css));
+  check('#64 页脚收成一行：免责 11.5px、下留白 10px', /\.hmp-foot\{[^}]*margin:2px 12px 10px/.test(css) && /\.hmp-foot\{[^}]*font-size:11.5px/.test(css));
   check('两个 Key 各有行内测试按钮',
     html.includes('data-test="amap"') && html.includes('data-test="baidu"'));
   check('两个 Key 各有行内结果行',

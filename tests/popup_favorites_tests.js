@@ -97,18 +97,19 @@ check('popup.css：两主题变量齐全、收藏页无硬编码颜色',
   !/\.fav[^}]*#[0-9a-fA-F]{3,6}/.test(css) &&
   /\.favs\s*\{[^}]*overflow-y:\s*auto/.test(css));
 
-check('popup.css：触控点击区 ≥40、主题开关仍 44×32',
-  /\.flink[^{]*\{[^}]*min-height:\s*40px/.test(css) &&
-  /\.btn[^{]*\{[^}]*min-height:\s*40px/.test(css) &&
-  /\.seg-b[^{]*\{[^}]*width:\s*44px[^}]*height:\s*32px/.test(css));
+check('#64 控件三档高度：操作 28 / 按钮 32 / 主题段 40×28（点击区由 ≥28 + 8px 间距保证）',
+  /\.flink[^{]*\{[^}]*min-height:\s*28px/.test(css) &&
+  /\.fop-b[^{]*\{[^}]*min-height:\s*28px/.test(css) &&
+  /\.btn[^{]*\{[^}]*min-height:\s*32px/.test(css) &&
+  /\.seg-b[^{]*\{[^}]*min-width:\s*40px[^}]*min-height:\s*28px/.test(css));
 
-check('popup.css：撤销条为全宽信息带（s08 口径，#32c）',
+check('#64 撤销条：全宽信息带、32 高（字号 12、按钮 24 幽灵）',
   /\.undo\s*\{[^}]*background:\s*var\(--hmp-info-bg\)/.test(css) &&
   /\.undo\s*\{[^}]*margin:\s*4px 12px/.test(css) &&
   /\.undo\s*\{[^}]*padding:\s*6px 10px/.test(css) &&
   /\.undo \.ic\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/.test(css) &&
   /\.undo-t\s*\{[^}]*font-weight:\s*600/.test(css) &&
-  /\.undo \.btn\s*\{[^}]*align-self:\s*center[^}]*min-height:\s*40px/.test(css));
+  /\.undo \.btn\s*\{[^}]*align-self:\s*center[^}]*min-height:\s*24px/.test(css));
 
 check('popup.js：长名称单行省略由 JS 补 title（不是只靠 CSS）',
   /\.fname/.test(css) && /text-overflow:\s*ellipsis/.test(css) &&
@@ -267,6 +268,53 @@ const reset = () => { chrome.storage.local._store = {}; };
     JSON.parse(exp).schema === 2 && Array.isArray(JSON.parse(exp).items));
   check('导出内容就是单键数据，不多写其它 storage 键',
     Object.keys(chrome.storage.local._store).join(',') === KEY);
+
+  console.log('\n=== #64 弹窗整体重排 ===');
+  {
+    check('#64 头部单行 44：删副标题、标题 15/600、弹出按钮 28',
+      !/class="sub"/.test(html) &&
+      /\.ph\{[^}]*min-height:44px/.test(css) &&
+      /\.ph h1\{[^}]*font-size:15px/.test(css) &&
+      /\.hmp-popout\{[^}]*width:28px[^}]*height:28px/.test(css));
+    check('#64 页签分段：30 高、surface-2 底、无下划线',
+      /\.ptabs\{[^}]*background:var\(--hmp-surface-2\)/.test(css) &&
+      /\.ptab\{[^}]*min-height:30px/.test(css) &&
+      !/box-shadow:inset 0 -2px 0/.test(css));
+    check('#64 搜索 36 / 范围段 36 / chips 30 单行',
+      /\.srch-inp\{[^}]*height:36px/.test(css) &&
+      /\.rng-b\{[^}]*min-height:36px/.test(css) &&
+      /\.grp\{[^}]*height:30px/.test(css) &&
+      /\.grps\{[^}]*flex-wrap:nowrap/.test(css) &&
+      /\.grps-row\{[^}]*overflow-x:auto/.test(css));
+    check('#64 组管理为 30×30 图标按钮（无文字、sticky 右侧）',
+      /class="gmn"[^>]*aria-label="分组管理"[^>]*title="分组管理"/.test(html) &&
+      !/>组管理 </.test(html) &&
+      /\.gmn\{[^}]*width:30px[^}]*height:30px/.test(css) &&
+      /\.gmn\{[^}]*position:sticky/.test(css));
+    check('#64 条目 4 行：名称+组标签 / 地址 / 匹配+日期 / 操作行',
+      /el\('span', 'fgrp'/.test(js) &&
+      /groups\.find\(g => g\.id === item\.groupId\)/.test(js) &&
+      /\.fops\{[^}]*flex-wrap:nowrap/.test(css) &&
+      /\.fmeta\{[^}]*font-size:12px/.test(css));
+    check('#64 条目操作按钮 28 幽灵（取消收藏用错误色不外底）、提供方链接 28',
+      /\.fop-b\{[^}]*min-height:28px/.test(css) &&
+      /\.fop-b\.danger\{[^}]*var\(--hmp-err-ink\)/.test(css) &&
+      /\.flink\{[^}]*min-height:28px/.test(css) &&
+      /el\('button', 'fop-b', '移动'\)/.test(js) &&
+      /el\('button', 'fop-b danger', '取消收藏'\)/.test(js));
+    check('#64 底部工具两按钮等宽 32、配置卡整宽',
+      /\.fav-tools\{[^}]*grid-template-columns:1fr 1fr/.test(css) &&
+      /\.fav-tools \.btn\{[^}]*min-height:32px/.test(css) &&
+      /\.sync-cfg\{[^}]*padding:10px/.test(css));
+    check('#64 页脚一行：版本 11.5 + 文字链、免责 11.5',
+      /\.upd-l\{[^}]*align-items:baseline/.test(css) &&
+      /\.ver\{[^}]*font-size:11.5px/.test(css) &&
+      /\.upd-btn\{[^}]*font:600 11\.5px\/1[^}]*text-decoration:none/.test(css) &&
+      /\.hmp-foot\{[^}]*font-size:11.5px/.test(css));
+    check('#64 560 宽操作行 ≤520、paper 主题分段用描边而非阴影',
+      /@media \(min-width:540px\)\{\.fav-main,\.fops\{max-width:520px\}\}/.test(css) &&
+      /\[data-theme="paper"\] \.ptab\[aria-selected="true"\]\{box-shadow:inset 0 0 0 1px/.test(css));
+  }
 
   finish();
 })();

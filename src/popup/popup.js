@@ -1078,8 +1078,15 @@
     const l1 = el('span', 'fline1');
     const name = el('span', 'fname', item.name || '未命名');
     name.title = item.name || '';
+    const grp = groups.find(g => g.id === item.groupId);
     const go = el('span', 'fgo', '定位 ›');
-    l1.appendChild(name); l1.appendChild(go);
+    l1.appendChild(name);
+    if (grp) {
+      const tag = el('span', 'fgrp', grp.name);
+      tag.title = grp.name;
+      l1.appendChild(tag);
+    }
+    l1.appendChild(go);
     main.appendChild(l1);
 
     const metaText = [item.tier, item.address].filter(Boolean).join(' · ');
@@ -1119,7 +1126,7 @@
     ops.appendChild(links);
 
     const btns = el('span', 'fbtns');
-    const move = el('button', 'btn sec', '移动到…');
+    const move = el('button', 'fop-b', '移动');
     move.type = 'button';
     move.setAttribute('aria-expanded', String(favMovingId === item.steleId));
     move.addEventListener('click', () => {
@@ -1128,7 +1135,7 @@
     });
     btns.appendChild(move);
 
-    const del = el('button', 'btn sec danger', '取消收藏');
+    const del = el('button', 'fop-b danger', '取消收藏');
     del.type = 'button';
     del.addEventListener('click', () => removeFavorite(item));
     btns.appendChild(del);
