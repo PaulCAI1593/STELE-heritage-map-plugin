@@ -10,6 +10,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+> **仓库地址**：[GitHub](https://github.com/PaulCAI1593/STELE-heritage-map-plugin) · [Gitee 镜像](https://gitee.com/Paul1593/stele-heritage-map-plugin)
+
 ![封面：文保点位的开放信息与收藏夹](docs/promo/0.6.0/cover-1280x720.png)
 
 <sub>介质说明：扩展自有界面（弹窗、卡片、WebDAV）为真实截图或真实组件渲染；地图底图与地图控件区为示意图（STELE 站点当日返回 502）；第 7 张的窗口容器为手绘。示例点位：独乐寺（天津市蓟州区武定街41号）。</sub>
@@ -67,6 +69,7 @@
 
 ```bash
 git clone https://github.com/PaulCAI1593/STELE-heritage-map-plugin.git
+git clone https://gitee.com/Paul1593/stele-heritage-map-plugin.git   # 国内访问更稳的 Gitee 镜像
 ```
 
 然后在 `chrome://extensions/` →「加载已解压的扩展程序」→ 选择仓库里的 **`src/`** 目录（扩展本体在 `src/`，无需构建）。
