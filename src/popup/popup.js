@@ -684,7 +684,11 @@
       const tag = links.tag;
       const main = $('dlMain'), src = $('dlSrc');
       if (main) main.href = links.download || (DOWNLOAD_BASE + tag + '/' + DOWNLOAD_ASSET(tag));
-      if (src) src.href = links.url || RELEASE_PAGE(tag);
+      if (src) {
+        src.href = links.url || RELEASE_PAGE(tag);
+        // #72：来源可能是 Gitee，链接文案必须跟着来源走；镜像/未知来源回落中性的「发布页」
+        src.textContent = links.label ? links.label + ' 发布页' : '发布页';
+      }
     }
   }
 
