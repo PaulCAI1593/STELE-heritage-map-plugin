@@ -754,5 +754,40 @@ function lib(items) {
       'text=' + H.els.syncStatus.textContent + ' hintHidden=' + H.els.favHint.hidden);
   }
 
+  console.log('\n=== #67 分组 chip 按下态与「范围」耦合 ===');
+  {
+    const H = build({ store: { [FKEY]: lib([
+      { steleId: 's1', name: '龙华寺', groupId: 'g-been', savedAt: 1000 },
+      { steleId: 's2', name: '甲', groupId: 'g-want', savedAt: 900 },
+    ]) } });
+    await sleep(30);
+    const chips = () => H.els.favChips.children;
+    check('#67 初态 scope=all：0 个 chip 按下',
+      H.popup.favorites.state().scope === 'all' && !chips().some(b => b.attrs['aria-pressed'] === 'true'),
+      'scope=' + H.popup.favorites.state().scope + ' pressed=' + chips().map(b => b.attrs['aria-pressed']).join(','));
+
+    chips().find(b => b.attrs['data-g'] === 'g-want').click();
+    await sleep(10);
+    check('#67 点「想去」chip：该组按下且 scope=group',
+      H.popup.favorites.state().scope === 'group' &&
+      chips().find(b => b.attrs['data-g'] === 'g-want').attrs['aria-pressed'] === 'true' &&
+      chips().find(b => b.attrs['data-g'] === 'g-been').attrs['aria-pressed'] === 'false',
+      'pressed=' + chips().map(b => b.attrs['data-g'] + ':' + b.attrs['aria-pressed']).join(','));
+
+    H.popup.favorites.setScope('all');
+    await sleep(10);
+    check('#67 再点「全部」：全部 chip 收起、范围=全部',
+      H.popup.favorites.state().scope === 'all' && !chips().some(b => b.attrs['aria-pressed'] === 'true'),
+      'pressed=' + chips().map(b => b.attrs['aria-pressed']).join(','));
+
+    H.popup.favorites.setScope('group');
+    await sleep(10);
+    check('#67 点「当前组」：按 favActiveGroup 恢复该组高亮',
+      H.popup.favorites.state().scope === 'group' && H.popup.favorites.state().group === 'g-want' &&
+      chips().find(b => b.attrs['data-g'] === 'g-want').attrs['aria-pressed'] === 'true' &&
+      !chips().filter(b => b.attrs['data-g'] !== 'g-want').some(b => b.attrs['aria-pressed'] === 'true'),
+      'pressed=' + chips().map(b => b.attrs['data-g'] + ':' + b.attrs['aria-pressed']).join(','));
+  }
+
   finish();
 })();

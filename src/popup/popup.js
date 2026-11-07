@@ -1046,7 +1046,8 @@
       const b = el('button', 'grp');
       b.type = 'button';
       b.setAttribute('data-g', g.id);
-      b.setAttribute('aria-pressed', String(g.id === favActiveGroup));
+      // #67：chip 按下态只在「按组」范围下成立；范围为「全部」时没有任何 chip 按下
+      b.setAttribute('aria-pressed', String(favScope === 'group' && g.id === favActiveGroup));
       const t = el('span', 'gt', g.name);
       t.title = g.name;
       b.appendChild(t);
