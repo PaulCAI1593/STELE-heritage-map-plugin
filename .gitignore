@@ -40,3 +40,6 @@ research/main.enus.css
 research/feature_*.json
 research/feature_*.plain.txt
 research/cases/
+
+# 本地回归测试，不入库（目录保留，供本地 npm test 使用）
+/tests/

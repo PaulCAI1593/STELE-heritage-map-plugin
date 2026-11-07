@@ -259,7 +259,7 @@ lon_real = 0.98431778 × lon_stele + 5.03246552
 lat_real = 0.98833425 × lat_stele − 1.11021542
 ```
 
-效果（见 `tests/geo_tests.js`）：
+效果（坐标精度实测记录）：
 
 | | 平均误差 | 最大误差 |
 |---|---|---|
@@ -289,7 +289,7 @@ lat_real = 0.98833425 × lat_stele − 1.11021542
 | **高德** | GCJ02 | WGS84 → GCJ02 | `poi.gcj` |
 | **百度** | BD09 | WGS84 → GCJ02 → BD09 | `poi.bd09` |
 
-精度实测（5 个留出点位，见 `tests/geo_tests.js`）：
+精度实测（5 个留出点位，坐标精度实测记录）：
 
 | 目标坐标系 | 平均误差 | 最大误差 |
 |---|---|---|
@@ -530,7 +530,6 @@ heritage-map-plugin/
 │   ├── background/          MV3 service worker（缓存清理、跨域代理、点图标开独立小窗）
 │   ├── icons/               PNG 图标（16/32/48/128，由 tools/make-icons.js 生成）
 │   └── LICENSE
-├── tests/                   回归测试（npm test，共 1482 项检查 = 37 套 1467 项 + 点位切换 15 项）
 │   ├── fixtures/            22 个真实点位的 feature 响应 + picks.json
 │   ├── run_tests.js         16 个文保单位匹配测试
 │   ├── baidu_parity_tests.js 百度侧全链路 + 跨数据源决策一致性矩阵

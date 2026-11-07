@@ -103,18 +103,11 @@ git clone https://github.com/PaulCAI1593/STELE-heritage-map-plugin.git
 - 不收集、不上报使用数据；不做远程代码加载。
 - 高德/百度 Key 只存本机；导出收藏不含 Key、WebDAV 密码或任何凭据。
 
-## 🛠️ 开发与测试
+## 🛠️ 开发与构建
 
-无需安装依赖，纯 Node 即可跑全部测试（**1482 项检查**：37 套 1467 项 + 点位切换 15 项）：
+无需安装依赖（构建脚本只用 Node）：
 
 ```bash
-npm test                 # 全部
-npm run test:match       # 16 个真实文保单位：解密→抽取→名称规范化→匹配
-npm run test:baidu       # 同一批真实点位走完整百度管道（跨数据源一致性）
-npm run test:group       # 子项目借用父组地址 / 泛词歧义 / 大型场地
-npm run test:inject      # 详情面板 DOM 注入与卡片生命周期
-npm run test:switch      # 点位切换时序（迟到响应不得覆盖当前点位）
-npm run test:api         # 高德/百度请求 URL 契约
 npm run build            # 重新生成图标 + 打包到 release/
 ```
 
@@ -127,7 +120,6 @@ npm run build            # 重新生成图标 + 打包到 release/
 | `src/popup/` | 弹窗：收藏页、设置、Key 测试、缓存与日志导出 |
 | `src/shared/` | 收藏存储与 WebDAV 同步 |
 | `src/background/` | service worker：独立小窗的窗口管理 |
-| `tests/` | 1482 项回归测试；`tests/fixtures/` 是 22 个真实文保的 feature 响应样本 |
 | `tools/` | 图标生成、打包脚本 |
 | `docs/promo/` | 宣传图（当前版本在 `docs/promo/0.6.0/`；旧版图保留） |
 | `docs/screenshots/` | 功能截图（含历史版本，供 Release 正文引用） |
@@ -186,7 +178,7 @@ STELE 是一个由个人长期维护、完全免费且无广告的中国不可�
 
 - 插件在你的浏览器里读取 STELE 页面**公开展示的数据**，并按你配置的 Key 请求高德/百度；不搭建中转服务器，不收集、不上传用户数据。
 - 开放时间等信息来自第三方地图，**可能滞后或出错，出行前请以现场公告为准**。
-- 仓库中**不包含** STELE 站点的任何源码或样式文件；`tests/fixtures/` 仅为测试所需的最小数据样本。
+- 仓库中**不包含** STELE 站点的任何源码或样式文件；本地测试所需的最小数据样本也不入库。
 
 ## 🤝 参与
 
