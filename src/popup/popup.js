@@ -27,6 +27,17 @@
   const DOWNLOAD_ASSET = tag => 'heritage-map-plugin-' + tag + '.zip';
   const RELEASE_PAGE = tag => 'https://github.com/' + UPDATE_REPO + '/releases/tag/' + tag;
 
+  // #72：更新检查先 Gitee 后 GitHub，两边都参与版本比较，取更新的那个；相同取 Gitee。
+  // Gitee 走匿名 API（不带任何令牌），仓库公开后可用；资产链接取 releases/latest 里的精确资产。
+  const GITEE_REPO = 'Paul1593/stele-heritage-map-plugin';
+  const GITEE_API = 'https://gitee.com/api/v5/repos/' + GITEE_REPO + '/releases/latest';
+  const GITEE_PAGE = tag => 'https://gitee.com/' + GITEE_REPO + '/releases/tag/' + tag;
+  const GITEE_DOWNLOAD = tag => 'https://gitee.com/' + GITEE_REPO + '/releases/download/' + tag + '/' + DOWNLOAD_ASSET(tag);
+  const UPDATE_SOURCES = [
+    { id: 'gitee', label: 'Gitee', api: GITEE_API, page: GITEE_PAGE, download: GITEE_DOWNLOAD },
+    { id: 'github', label: 'GitHub', api: UPDATE_API, page: RELEASE_PAGE, download: tag => DOWNLOAD_BASE + tag + '/' + DOWNLOAD_ASSET(tag) },
+  ];
+
   // "已保存"的快照。用来判断输入框里有没有改了但没点保存的内容——
   // 这是"我填了百度 Key、测试也通过了，怎么还是高德的结果"的常见原因：
   // 「测试」测的是输入框里的值，只有点「保存」才会写进 chrome.storage。
@@ -672,7 +683,7 @@
     if (links && state === 'available') {
       const tag = links.tag;
       const main = $('dlMain'), src = $('dlSrc');
-      if (main) main.href = DOWNLOAD_BASE + tag + '/' + DOWNLOAD_ASSET(tag);
+      if (main) main.href = links.download || (DOWNLOAD_BASE + tag + '/' + DOWNLOAD_ASSET(tag));
       if (src) src.href = links.url || RELEASE_PAGE(tag);
     }
   }
@@ -692,26 +703,66 @@
     return res.json();
   }
 
-  function parseUpdate(remote) {
-    // 两家来源统一成 {tag, version, url, viaMirror}
+  // #72：Gitee / GitHub / jsDelivr 兜底统一成同一种结构，链接与来源标签跟着走。
+  const FALLBACK_SOURCE = {
+    id: 'github', label: 'GitHub', page: RELEASE_PAGE,
+    download: tag => DOWNLOAD_BASE + tag + '/' + DOWNLOAD_ASSET(tag),
+  };
+
+  function parseUpdate(remote, source) {
+    // 两家来源统一成 {tag, version, url, download, source, label, viaMirror}
+    const src = source || FALLBACK_SOURCE;
     if (remote && remote.tag_name) {
-      return { tag: remote.tag_name, version: remote.tag_name.replace(/^v/i, ''), url: remote.html_url || '', viaMirror: false };
+      const tag = String(remote.tag_name);
+      return {
+        tag,
+        version: tag.replace(/^v/i, ''),
+        url: remote.html_url || (typeof src.page === 'function' ? src.page(tag) : ''),
+        download: resolveDownload(remote, tag, src),
+        source: src.id, label: src.label, viaMirror: false,
+      };
     }
     if (remote && remote.version) {
-      return { tag: 'v' + String(remote.version).replace(/^v/i, ''), version: String(remote.version).replace(/^v/i, ''), url: '', viaMirror: true };
+      const v = String(remote.version).replace(/^v/i, '');
+      return { tag: 'v' + v, version: v, url: '', download: '', source: 'mirror', label: '', viaMirror: true };
     }
     return null;
+  }
+
+  /** #72：Gitee release 里还有源码包（v0.6.0.zip / .tar.gz），必须按精确资产名取，
+   *  不能取第一个 .zip。匹配不到才退回拼出来的地址。 */
+  function resolveDownload(remote, tag, src) {
+    const want = DOWNLOAD_ASSET(tag);
+    if (src && src.id === 'gitee' && remote && Array.isArray(remote.assets)) {
+      const hit = remote.assets.find(a => a && a.name === want);
+      if (hit && hit.browser_download_url) return hit.browser_download_url;
+    }
+    return typeof src.download === 'function' ? src.download(tag) : '';
+  }
+
+  /** 来源标签后缀：镜像优先；否则「· 来自 Gitee / GitHub」 */
+  function sourceSuffix(remote) {
+    if (!remote) return '';
+    if (remote.viaMirror) return ' · 经镜像检查';
+    return remote.label ? ' · 来自 ' + remote.label : '';
   }
 
   /** #21：由远端信息与本机版本决定状态与文案（纯函数，便于四态测试）。 */
   function decideUpdate(remote, local) {
     if (!remote) return { state: 'error', text: '无法检查更新 · 请检查网络后重试' };
     const cmp = compareVersions(remote.version, local);
-    const suffix = remote.viaMirror ? ' · 经镜像检查' : '';
-    if (cmp > 0) return { state: 'available', tag: remote.tag, url: remote.url, viaMirror: remote.viaMirror, text: '有新版本 ' + remote.tag + suffix };
+    const suffix = sourceSuffix(remote);
+    if (cmp > 0) {
+      return {
+        state: 'available', tag: remote.tag, url: remote.url, download: remote.download || '',
+        source: remote.source || '', label: remote.label || '', viaMirror: !!remote.viaMirror,
+        text: '有新版本 ' + remote.tag + suffix,
+      };
+    }
     const ahead = cmp < 0;
     return {
-      state: 'latest', tag: remote.tag, viaMirror: remote.viaMirror, ahead,
+      state: 'latest', tag: remote.tag, source: remote.source || '', label: remote.label || '',
+      download: remote.download || '', viaMirror: !!remote.viaMirror, ahead,
       text: (ahead ? '已领先上游 ' : '已是最新 · 上游 ') + remote.tag + suffix,
     };
   }
@@ -728,22 +779,39 @@
       if (!c || !c.checkedAt) return;
       const fresh = Date.now() - c.checkedAt < UPDATE_TTL_MS;
       if (fresh && c.state === 'available') {
-        setUpd('available', '有新版本 ' + c.tag + (c.viaMirror ? ' · 经镜像检查' : ''), c);
+        // #72：缓存里带来源信息，回显文案与下载链接必须和当时选中的来源一致
+        setUpd('available', c.text || ('有新版本 ' + c.tag + sourceSuffix(c)), c);
       } else if (fresh && c.state === 'latest') {
         // 缓存里带 ahead/text（#21：本机 0.4.2 高于上游 0.4.1 时显示「已领先上游」，不能退回「已是最新」）
-        const text = c.text || ((c.ahead ? '已领先上游 ' : '已是最新 · 上游 ') + c.tag + (c.viaMirror ? ' · 经镜像检查' : ''));
+        const text = c.text || ((c.ahead ? '已领先上游 ' : '已是最新 · 上游 ') + c.tag + sourceSuffix(c));
         setUpd('latest', text);
       }
     });
   }
 
+  /** #72：在多个来源结果里取版本号最新的；版本相同保留先查到的（Gitee 优先）。 */
+  function pickNewer(list) {
+    let best = null;
+    for (const r of (list || [])) {
+      if (!r) continue;
+      if (!best || compareVersions(r.version, best.version) > 0) best = r;
+    }
+    return best;
+  }
+
+  /** 单个来源失败（超时/404/非 200）都只返回 null，不影响另一个来源。 */
+  async function fetchSource(src) {
+    try { return parseUpdate(await fetchJson(src.api), src); } catch (e) { return null; }
+  }
+
   async function checkUpdate(force) {
     setUpd('checking', '正在检测更新…');
-    let remote = null;
-    try {
-      remote = parseUpdate(await fetchJson(UPDATE_API));
-    } catch (e) {
-      // 主链路失败 → 镜像只读 manifest.json 的 version（任务书 §五 兜底）
+    // #72：先 Gitee、再 GitHub（各自 2.5s 超时），两边都参与比较，取更新的那个。
+    const remoteList = [];
+    for (const src of UPDATE_SOURCES) remoteList.push(await fetchSource(src));
+    let remote = pickNewer(remoteList);
+    if (!remote) {
+      // 两边都不可用 → 保留原兜底：镜像只读 manifest.json 的 version（任务书 §五 兜底）
       try {
         remote = parseUpdate(await fetchJson(UPDATE_MIRROR));
       } catch (e2) {
@@ -1808,7 +1876,7 @@
     theme: { get: getTheme, set: applyTheme, normalize: normalizeTheme, KEY: THEME_KEY, default: DEFAULT_THEME },
     state: { get: () => currentState, render: renderState, compute: computeState },
     version: { get: getVersion, compare: compareVersions, parse: parseUpdate, asset: DOWNLOAD_ASSET, page: RELEASE_PAGE },
-    update: { check: checkUpdate, set: setUpd, decide: decideUpdate, restore: restoreUpdateCache, cacheKey: UPDATE_CACHE_KEY, repo: UPDATE_REPO, api: UPDATE_API, mirror: UPDATE_MIRROR, ttl: UPDATE_TTL_MS },
+    update: { check: checkUpdate, set: setUpd, decide: decideUpdate, restore: restoreUpdateCache, cacheKey: UPDATE_CACHE_KEY, repo: UPDATE_REPO, api: UPDATE_API, mirror: UPDATE_MIRROR, ttl: UPDATE_TTL_MS, sources: UPDATE_SOURCES, pick: pickNewer, giteeApi: GITEE_API, giteePage: GITEE_PAGE },
     test: {
       one: testOne, all: testKeys, classify: classifyError, providers: PROVIDERS, reset: resetRes,
       keyTest: {
